@@ -27,8 +27,8 @@ func (a *application) checkUpstream() error {
 }
 
 func (a *application) isUpstreamApp(id string) bool {
-	// MGU Lab is the wrapper's own app, including if upstream later adds its namesake.
-	return id != "mgu_lab"
+	// Local apps take precedence even if upstream later adds their namesakes.
+	return id != "mgu_lab" && id != "ambient_lighting"
 }
 
 func (a *application) appManifest(id string) string {

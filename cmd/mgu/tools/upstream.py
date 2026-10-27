@@ -9,6 +9,7 @@ import sys
 import tempfile
 
 sys.dont_write_bytecode = True
+LOCAL_APPS = {'mgu_lab', 'ambient_lighting'}
 
 
 def load_tool(upstream, name):
@@ -76,21 +77,21 @@ class RuntimeOverlay:
 
 def build(args):
     module = load_tool(args.upstream, 'build')
-    source = (args.root if args.app == 'mgu_lab' else args.upstream) / 'apps' / args.app
+    source = (args.root if args.app in LOCAL_APPS else args.upstream) / 'apps' / args.app
     spec = json.loads((source / 'app.json').read_text(encoding='utf-8'))
     spec.setdefault('id', args.app)
     module.ROOT = str(args.root)
     module.DIST = str(args.root / 'dist')
     module.SDK = str(args.root / 'bmw-extracted' / 'oap-sdk')
     module.KIT = str(args.upstream / 'kit')
-    module.shutil = RuntimeOverlay(args.root, args.upstream, args.app == 'mgu_lab')
+    module.shutil = RuntimeOverlay(args.root, args.upstream, args.app in LOCAL_APPS)
     (args.root / 'out').mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='mgu-source-', dir=str(args.root / 'out')) as work:
         apps = Path(work) / 'apps'
         app = apps / args.app
         app.parent.mkdir(parents=True)
         shutil.copytree(source, app)
-        if args.app != 'mgu_lab':
+        if args.app not in LOCAL_APPS:
             copy_app_data(args.root / 'apps' / args.app, app, spec)
         copy_app_data(args.root / 'bmw-extracted' / args.app, app, spec)
         module.APPS = str(apps)
@@ -182,7 +183,7 @@ def kit(args):
     with tempfile.TemporaryDirectory(prefix='mgu-kit-', dir=str(output)) as work:
         # The kit tool reads manifests here; implementation stays in upstream.
         for app in args.apps:
-            source = (args.root if app == 'mgu_lab' else args.upstream) / 'apps' / app / 'app.json'
+            source = (args.root if app in LOCAL_APPS else args.upstream) / 'apps' / app / 'app.json'
             destination = Path(work) / 'apps' / app / 'app.json'
             destination.parent.mkdir(parents=True)
             shutil.copy2(source, destination)

@@ -1,0 +1,442 @@
+{
+  "id": "ambient_lighting",
+  "title": "Ambient Lighting",
+  "description": "Confirmed ambient color-menu presets and driving-mode mappings",
+  "version": "1.0.0",
+  "vendor": "custom",
+  "loggingId": "OA9D",
+  "iconGlyph": "AMB",
+  "signals": {
+    "de.bmw.infotainment.drivingexcitement.FES": {
+      "statusFESVehicleDynamicSwitchHMI": "rs"
+    },
+    "de.bmw.infotainment.misc.ComfortFunctionIuK": {
+      "statusAmbientLightInteriorColour": "rs",
+      "ambientLightInteriorColour": "w"
+    }
+  },
+  "screens": [
+    {
+      "title": "Ambient Lighting",
+      "parent": "MAIN",
+      "name": "MAIN",
+      "items": [
+        [
+          "text3",
+          "HOME_MODE",
+          "Waiting for driving mode"
+        ],
+        [
+          "text3",
+          "HOME_LIGHT",
+          "Waiting for vehicle lighting"
+        ],
+        [
+          "text3",
+          "HOME_ACTIVE",
+          ""
+        ],
+        [
+          "text3",
+          "HOME_AUTO",
+          ""
+        ],
+        [
+          "text3",
+          "HOME_RESULT",
+          ""
+        ],
+        [
+          "button",
+          "HOME_PRESETS",
+          "Presets"
+        ],
+        [
+          "button",
+          "HOME_MODES",
+          "Driving modes"
+        ],
+        [
+          "button",
+          "HOME_SETTINGS",
+          "Lighting settings"
+        ],
+        [
+          "button",
+          "HOME_PREFERENCES",
+          "Preferences"
+        ],
+        [
+          "button",
+          "HOME_TOGGLE",
+          "Enable automation"
+        ],
+        [
+          "button",
+          "HOME_RETRY",
+          "Reconnect services"
+        ],
+        [
+          "button",
+          "HOME_HISTORY",
+          "Recent changes"
+        ]
+      ]
+    },
+    {
+      "title": "PRESETS",
+      "parent": "MAIN",
+      "name": "PRESETS",
+      "items": [
+        [
+          "text3",
+          "PRESET_HELP",
+          "Rotate to navigate; press to select. Factory menu numbers have no confirmed color names."
+        ],
+        [
+          "button",
+          "PRESET_LIST",
+          "Loading presets"
+        ],
+        [
+          "button",
+          "PRESET_CAPTURE",
+          "Capture current vehicle lighting"
+        ],
+        [
+          "button",
+          "PRESET_NEW",
+          "Create preset"
+        ],
+        [
+          "button",
+          "PRESETS_HOME",
+          "Home"
+        ]
+      ]
+    },
+    {
+      "title": "DETAIL",
+      "parent": "MAIN",
+      "name": "DETAIL",
+      "items": [
+        [
+          "text3",
+          "DETAIL_NAME",
+          ""
+        ],
+        [
+          "text3",
+          "DETAIL_RESULT",
+          ""
+        ],
+        [
+          "button",
+          "DETAIL_APPLY",
+          "Apply preset"
+        ],
+        [
+          "button",
+          "DETAIL_EDIT",
+          "Edit / rename"
+        ],
+        [
+          "button",
+          "DETAIL_DUPLICATE",
+          "Duplicate"
+        ],
+        [
+          "button",
+          "DETAIL_DELETE",
+          "Delete preset"
+        ],
+        [
+          "button",
+          "DETAIL_HOME",
+          "Home"
+        ]
+      ]
+    },
+    {
+      "title": "DELETE",
+      "parent": "MAIN",
+      "name": "DELETE",
+      "items": [
+        [
+          "text3",
+          "DELETE_HELP",
+          "Delete the selected saved preset and its mappings? Vehicle lighting stays as reported."
+        ],
+        [
+          "button",
+          "DELETE_CONFIRM",
+          "Delete preset"
+        ],
+        [
+          "button",
+          "DELETE_CANCEL",
+          "Cancel"
+        ]
+      ]
+    },
+    {
+      "title": "EDITOR",
+      "parent": "MAIN",
+      "name": "EDITOR",
+      "items": [
+        [
+          "text3",
+          "EDIT_SUMMARY",
+          ""
+        ],
+        [
+          "text3",
+          "EDIT_HELP",
+          "Edit locally, then Save. Apply from the preset screen. Back to Home cancels the draft. Unknown captured fields are retained and never written."
+        ],
+        [
+          "button",
+          "EDIT_NAME",
+          "Edit name"
+        ],
+        [
+          "button",
+          "EDIT_MENU",
+          "Choose factory menu"
+        ],
+        [
+          "text3",
+          "EDIT_RESULT",
+          ""
+        ],
+        [
+          "button",
+          "EDIT_SAVE",
+          "Save preset"
+        ],
+        [
+          "button",
+          "EDIT_CANCEL",
+          "Cancel draft"
+        ]
+      ]
+    },
+    {
+      "title": "MENU PICK",
+      "parent": "MAIN",
+      "name": "MENU_PICK",
+      "items": [
+        [
+          "text3",
+          "MENU_HELP",
+          "Select a factory menu. No vehicle command is sent until Apply."
+        ],
+        [
+          "button",
+          "MENU_LIST",
+          "Factory menus"
+        ]
+      ]
+    },
+    {
+      "title": "NAME",
+      "parent": "MAIN",
+      "name": "NAME",
+      "items": [
+        [
+          "text3",
+          "NAME_PREVIEW",
+          ""
+        ],
+        [
+          "text3",
+          "NAME_HELP",
+          "Choose a position, then a character. Spaces erase characters. Maximum 24 characters."
+        ],
+        [
+          "button",
+          "NAME_PREV",
+          "Previous character position"
+        ],
+        [
+          "button",
+          "NAME_NEXT",
+          "Next character position"
+        ],
+        [
+          "button",
+          "NAME_CHAR",
+          "Choose character"
+        ],
+        [
+          "button",
+          "NAME_DONE",
+          "Done editing name"
+        ]
+      ]
+    },
+    {
+      "title": "CHARACTER",
+      "parent": "MAIN",
+      "name": "CHARACTER",
+      "items": [
+        [
+          "button",
+          "CHAR_LIST",
+          "Characters"
+        ]
+      ]
+    },
+    {
+      "title": "MODES",
+      "parent": "MAIN",
+      "name": "MODES",
+      "items": [
+        [
+          "text3",
+          "MODE_HELP",
+          "Observed variants only. Mappings apply on valid transitions. Manual selections last until the next transition."
+        ],
+        [
+          "button",
+          "MODE_LIST",
+          "Driving modes"
+        ],
+        [
+          "text3",
+          "MODE_LAST",
+          ""
+        ],
+        [
+          "text3",
+          "MODE_RESULT",
+          ""
+        ],
+        [
+          "button",
+          "MODE_TOGGLE",
+          "Toggle automation"
+        ],
+        [
+          "button",
+          "MODES_HOME",
+          "Home"
+        ]
+      ]
+    },
+    {
+      "title": "MAPPING",
+      "parent": "MAIN",
+      "name": "MAPPING",
+      "items": [
+        [
+          "text3",
+          "MAPPING_TITLE",
+          ""
+        ],
+        [
+          "button",
+          "MAPPING_LIST",
+          "Choose preset"
+        ]
+      ]
+    },
+    {
+      "title": "LIGHTING",
+      "parent": "MAIN",
+      "name": "LIGHTING",
+      "items": [
+        [
+          "text3",
+          "LIGHT_CAPABILITIES",
+          "Supported: legacy factory color-menu selection with reported-menu confirmation. Color names are unconfirmed. On/off, brightness, independent zones/layers, dynamic lighting and roof equipment controls are not established by the saved evidence."
+        ],
+        [
+          "text3",
+          "LIGHT_SOURCE",
+          ""
+        ],
+        [
+          "scroll",
+          "LIGHT_RAW",
+          "Waiting for lighting"
+        ],
+        [
+          "text3",
+          "LIGHT_RESULT",
+          ""
+        ],
+        [
+          "button",
+          "LIGHT_PRESETS",
+          "Choose color-menu preset"
+        ],
+        [
+          "button",
+          "LIGHT_REFRESH",
+          "Read vehicle lighting"
+        ],
+        [
+          "button",
+          "LIGHTING_HOME",
+          "Home"
+        ]
+      ]
+    },
+    {
+      "title": "PREFERENCES",
+      "parent": "MAIN",
+      "name": "PREFERENCES",
+      "items": [
+        [
+          "button",
+          "PREF_ENABLE",
+          "Automation"
+        ],
+        [
+          "button",
+          "PREF_IMMEDIATE",
+          "Apply current mapping when enabled"
+        ],
+        [
+          "button",
+          "PREF_BACKGROUND",
+          "Allow automation while hidden"
+        ],
+        [
+          "text3",
+          "PREF_HELP",
+          "Defaults: automation off, transitions only, hidden operation off. Hidden operation is experimental and requires this process to remain running. Startup/reconnect reads state without writing. No sleep/restart persistence of vehicle state is assumed."
+        ],
+        [
+          "text3",
+          "PREF_RESULT",
+          ""
+        ],
+        [
+          "button",
+          "PREFERENCES_HOME",
+          "Home"
+        ]
+      ]
+    },
+    {
+      "title": "HISTORY",
+      "parent": "MAIN",
+      "name": "HISTORY",
+      "items": [
+        [
+          "scroll",
+          "HISTORY_TEXT",
+          "No changes this session"
+        ],
+        [
+          "button",
+          "HISTORY_HOME",
+          "Home"
+        ]
+      ]
+    }
+  ],
+  "settings": []
+}
