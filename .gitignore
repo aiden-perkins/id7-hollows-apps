@@ -1,0 +1,33 @@
+/bmw-extracted/
+# BMW's SDK - extract it from your own head unit (../idrive7-apps/kit/tools/extract_sdk.js), never commit it
+oap-sdk
+# the unit's SOME/IP catalog (copied from your unit for mgu signals check / show)
+# build output - every .mgu contains BMW's SDK, so don't publish these either
+dist/
+# keys / local stuff
+*.pem
+*.key
+node_modules/
+__pycache__/
+*.pyc
+.venv/
+# fault texts for one car from a coding tool export (mgu dtc import)
+apps/dtc_scanner/dtc_texts.js
+
+/tools/mgu-ssh/
+/data/enrollments/
+/mgu-app-backups-*/
+sdk-source-*/
+out/
+MANUAL-COMMANDS.md
+# fault text database (BMW's texts per control unit), imported with mgu dtc db
+apps/dtc_scanner/dtc_db/
+# fault text tables (BMW's): kept out of git; mgu dtc tables puts them into dtc_db/tables
+/dtc_tables/
+dtc_scanner_*.json
+
+# Doom: Freedoom data is downloaded by the build (app.json "assets")
+apps/doom/*.wad
+
+id_rsa
+

@@ -1,0 +1,27 @@
+[
+    {
+        "new":  "const { Display } = require(\u0027./display\u0027);\nconst { numberLabel } = require(\u0027./setting_units\u0027);",
+        "old":  "const { Display } = require(\u0027./display\u0027);",
+        "file":  "mgu.js"
+    },
+    {
+        "new":  "if (s.type === \u0027number\u0027) return numberLabel(s, v, (k) =\u003e this.get(k));",
+        "old":  "if (s.type === \u0027number\u0027) return String(v) + (s.unit ? \u0027 \u0027 + s.unit : \u0027\u0027) + (s.markDefault \u0026\u0026 v === s.default ? \u0027 (default)\u0027 : \u0027\u0027);",
+        "file":  "mgu.js"
+    },
+    {
+        "new":  "    const refreshItem = (s) =\u003e {\n        const comp = \u0027SET_\u0027 + s.key.toUpperCase();\n        if (s.type === \u0027bool\u0027) return Promise.all([ui.text(comp, s.label), ui.checked(comp, !!settings.get(s.key))]);\n        if (values(s)) {\n            const rows = s.type === \u0027number\u0027 \u0026\u0026 s.displayUnit\n                ? Promise.all(values(s).map((v, i) =\u003e ui.text(comp, numberLabel(s, v, (k) =\u003e settings.get(k)), i, \u0027ItemText\u0027)))\n                : Promise.resolve();\n            return rows.then(() =\u003e ui.selected(comp, Math.max(0, values(s).indexOf(settings.get(s.key)))));\n        }\n        // other types: two-row buttons in the wide settings state, label above, value below\n        return ui.cells(comp, 0, { Text1stRow: s.label, Text2ndRow: settings.display(s.key) });\n    };\n    const refresh = () =\u003e Promise.all(schema.map(refreshItem));\n    settings.onChange((key) =\u003e {\n        Promise.all(schema.filter((s) =\u003e s.displayUnit \u0026\u0026 s.displayUnit.setting === key).map(refreshItem))\n            .catch((e) =\u003e ctx.log.error(e));\n    });",
+        "old":  "    const refresh = () =\u003e Promise.all(schema.map((s) =\u003e {\n        const comp = \u0027SET_\u0027 + s.key.toUpperCase();\n        if (s.type === \u0027bool\u0027) return Promise.all([ui.text(comp, s.label), ui.checked(comp, !!settings.get(s.key))]);\n        if (values(s)) return ui.selected(comp, Math.max(0, values(s).indexOf(settings.get(s.key))));\n        // other types: two-row buttons in the wide settings state, label above, value below\n        return ui.cells(comp, 0, { Text1stRow: s.label, Text2ndRow: settings.display(s.key) });\n    }));",
+        "file":  "mgu.js"
+    },
+    {
+        "new":  "function call(p, method, params, timeoutMs) {\n    return nativeTick(() =\u003e p.callMethod(method, params || {}, timeoutMs || 5000));\n}\n\n/** Read a field through the native-call queue. */\nfunction get(p, field, timeoutMs) {\n    return nativeTick(() =\u003e p.getValue(field, timeoutMs || 3000));\n}",
+        "old":  "function call(p, method, params, timeoutMs) {\n    return nativeTick(() =\u003e p.callMethod(method, params || {}, timeoutMs || 5000));\n}",
+        "file":  "signals.js"
+    },
+    {
+        "new":  "module.exports = { watch, proxy, call, get, set, on, onAvailable, loadConfig, hasNative: () =\u003e !!someip };",
+        "old":  "module.exports = { watch, proxy, call, set, on, onAvailable, loadConfig, hasNative: () =\u003e !!someip };",
+        "file":  "signals.js"
+    }
+]
