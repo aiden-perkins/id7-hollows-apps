@@ -49,7 +49,7 @@ mgu --auto --key path/to/id_rsa car install
 mgu --auto --key path/to/id_rsa car status
 ```
 
-- `kit` builds **all upstream apps plus local MGU Lab and Ambient Lighting**, then creates the car kit.
+- `kit` builds **all upstream apps plus local MGU Lab, Ambient Lighting and Live Data Viewer**, then creates the car kit.
 - Select apps with `mgu kit mgu_lab edrive`.
 - `mgu build mgu_lab` packages an app without assembling a kit.
 - `kit` already builds its apps; a separate `build` first is unnecessary.
@@ -133,6 +133,7 @@ need Zig and Binaryen. GPU replay needs a compatible renderer for your host.
 ## Custom apps
 
 - [MGU Lab](apps/mgu_lab/) — the current local test app.
+- [Live Data Viewer](apps/live_data_viewer/) - categorized read-only readings, quality, trends and manual snapshots.
 - [Ambient Lighting](apps/ambient_lighting/) — saved color-menu presets and driving-mode mappings.
 
 App-specific features, settings and examples belong in each app's own README

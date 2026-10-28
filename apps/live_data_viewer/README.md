@@ -1,5 +1,67 @@
 # Live Data Viewer
 
+## Implemented app and current limits
+
+The app now has a manifest and native iDrive page menu, category lists, Signal
+details, Settings, and a confirmation screen for resetting observation history.
+The design below remains the requirements and research inventory.
+
+- Select a reading with the controller to see its source, validation notes,
+  delivery age/rate, quality and state. Details sets its native Back target to
+  the originating category; lists keep stable rows to preserve native selection.
+- Tires / TPMS stays within Driving and drivetrain. Wheel-specific readings use
+  reported FL/FR/RL/RR field identities. Radio-slot sensor IDs stay in an
+  unknown-position group and are never assigned to wheels by slot number.
+  Tire temperatures also appear in Temperatures using the same shared readings.
+- Both upstream transmission-temperature leads remain identifiable:
+  BasicDataSet transmission oil and EGS ECU 0x18 / DID 0xDA12. The latter is
+  explicitly unavailable; this app issues no diagnostic requests.
+- Source collection follows the visible category, including its details view.
+  Getters have bounded deadlines, no overlapping reads per field, and a
+  five-second failure backoff. TPMS polling has a five-second minimum.
+  Leaving data pages closes their proxies. Reconnects preserve graph gaps.
+- Waiting, live, stale, invalid, unavailable and error are separate states.
+  Retained last-valid values are labeled; no missing value becomes zero.
+  Catalog defaults and observed TPMS codes 65534/65533 are rejected.
+- Graphs and extrema use only validated numeric measurements. Currently GPS
+  altitude, in feet with a valid 3D height, meets that bar. Mode/gear enums and
+  reported sensor IDs are categorical and have no numeric graph.
+- Engine/RPM/speed, steering/pedal/braking, battery, fuel-tank and most thermal
+  conversions remain unconfirmed by the saved M850i evidence. The app collects
+  these candidates and identifies the limits, but does not display guessed
+  physical values, draw numeric trends from raw codes, or infer horsepower.
+  Unsupported engine-health rows remain visible. There is no normal-use raw view.
+- Numeric display uses three decimal places, US units, and the specified local
+  12-hour date/time format. Settings persist refresh preference (500/1000/2000 ms),
+  graph duration (60/180/600 seconds), and category ordering.
+- Trend buffers retain at most 1,201 points and ten minutes per numeric reading,
+  with gaps for invalid data, service errors and collection pauses. Extrema
+  cover valid observed samples only.
+- The catalog's infotainment power modes do not establish ignition on/off.
+  Extrema are therefore explicitly labeled **observation session**, reset
+  together only on the confirmed reset action, and not reused after app restart.
+  Automatic ignition reset and reliable same-drive restart retention remain
+  blocked by missing ignition evidence; app startup is not called ignition-on.
+- Save snapshot in Signal details writes one data file under
+  `data/snapshots/reading-<id>.json`, after a bounded getter refresh where possible.
+  It retains the source, delivery timestamp/age, raw payload, decoded state,
+  quality and observation extrema. Event-only snapshots retain the latest
+  delivery and its age; they are not claimed to be new or simultaneous samples.
+  Snapshots are manual; there is no continuous disk recording or screenshot flow.
+- Preferences use schema version 1 in `data/settings.json`. Unsupported schemas
+  and malformed saved settings are reported and preserved rather than overwritten.
+  Presentation does not round stored samples or calculation precision.
+- Wrapper routing and packaging recognize `live_data_viewer` as local and apply
+  the existing runtime getter patches. Normal app downloads can collect its
+  stored settings and snapshots. No upstream source was vendored.
+
+Implementation files: `app.json`, `main.js`, `definitions.js`, `services.js`,
+`model.js`, `storage.js`, and `view.js`.
+
+Source review only: tests, linters, formatters, builds, compilation and execution
+validation were not run. No bundle was generated or installed.
+
+
 ## Goal
 
 Provide an organized viewer for all useful data accessible on the M850i, including
@@ -11,8 +73,8 @@ Unavailable fields should remain identifiable without invented values.
 
 ## Pages, screens and navigation
 
-This is the proposed layout. This folder currently contains only this README;
-the screens and their data sources still need implementation.
+The native screens implement the layout below. Source availability and conversion
+limits are described above.
 
 ### How to move around
 
@@ -196,7 +258,7 @@ quality before displaying a decoded measurement. Work on additional diagnostic i
 
 | Area | Responsibility |
 | --- | --- |
-| App definition and entry point under `apps/live_data_viewer/` | App metadata, startup and lifecycle; files still need to be created |
+| App definition and entry point under `apps/live_data_viewer/` | App metadata, startup and lifecycle; implemented; see files listed above |
 | Screens and navigation | Page menu, category lists with TPMS under Driving and drivetrain, details and settings |
 | Signal definitions | Friendly names, categories, exact source mappings, units, decoding and validity rules |
 | Data access and shared state | Subscriptions, bounded polling, timestamps, availability and reconnect handling |
@@ -204,8 +266,8 @@ quality before displaying a decoded measurement. Work on additional diagnostic i
 | Preferences and snapshots | US units, precision, date/time format, category ordering and manually saved data snapshots |
 | Wrapper integration | App routing and packaging support through the existing wrapper |
 
-These are responsibility areas, not a fixed file structure. This documentation-only
-folder is not an installable app; routing and packaging support still need adding.
+These are responsibility areas, not a fixed file structure. This implemented
+folder now contains app source and wrapper routing; packaging has not been run.
 
 ### Availability and value states
 

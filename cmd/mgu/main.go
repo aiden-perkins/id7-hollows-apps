@@ -130,7 +130,7 @@ func (a *application) run(args []string) error {
 }
 
 func (a *application) help() {
-	fmt.Fprintln(a.out, "Hollows MGU wrapper: upstream apps plus local MGU Lab and Ambient Lighting")
+	fmt.Fprintln(a.out, "Hollows MGU wrapper: upstream apps plus local MGU Lab, Ambient Lighting and Live Data Viewer")
 	fmt.Fprintln(a.out, "\nUsage: mgu [global options] COMMAND [arguments]")
 	fmt.Fprintln(a.out, "\n  apps                              List source apps")
 	fmt.Fprintln(a.out, "  build [APP ...]                   Build app bundles (all apps by default)")
@@ -156,7 +156,7 @@ func (a *application) help() {
 	fmt.Fprintln(a.out, "  Example: mgu --auto car status")
 	fmt.Fprintln(a.out, "  MGU_HOST and MGU_KEY provide defaults; OpenSSH config and agent are supported.")
 	fmt.Fprintln(a.out, "\nRenderer modes: matching (default), stale (explicitly permit an older binary), none.")
-	fmt.Fprintln(a.out, "All apps use the upstream Python builder. MGU Lab and Ambient Lighting add local runtime patches. Preview uses Node.js; GIF encoding is native Go.")
+	fmt.Fprintln(a.out, "All apps use the upstream Python builder. Local apps add runtime patches. Preview uses Node.js; GIF encoding is native Go.")
 }
 
 func findRoot(root string) (string, error) {

@@ -57,6 +57,10 @@ go build -buildvcs=false -o out/mgu.exe ./cmd/mgu
 
 ## live data viewer
 - show all possible data
+- show time engine has been running
+- rear wheel steering angle?
+- dynamic sway bar pressure?
+- individual wheel speed, direction
 
 ### temps
 - both trans temps, oil, water/coolant, iat, anything else relevant
