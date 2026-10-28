@@ -1,112 +1,7 @@
 # Trip Data
 
-> App source and native screens are implemented; source-dependent limits are documented below.
-> The original choices remain the requirements; automatic ignition and several measurements need further evidence.
-
-## Implemented app and evidence limits
-
-Trip Data now has native iDrive screens, manual recording, durable sample batches,
-interruption recovery, saved-trip history, graph controls, metadata editing and
-confirmed deletion. The design below remains the requirements/research inventory.
-
-### Recording and storage
-
-- Current trip opens first. Manual Start/Finish are supported; no Pause/Resume is
-  offered. Recording continues across the app's pages independently of visible
-  UI, including stationary periods, while the app process remains alive.
-- Choose 500/1000/2000 ms recording detail before starting. Each trip retains its
-  policy, speed bands and elevation deadband; detail is never silently reduced.
-  There is no maximum duration or automatic retention deletion.
-- Both coordinates and altitude are recorded with independent validity checks.
-  Samples retain source payloads, receive timestamps, monotonic ages, quality,
-  connection generations and source GNSS timestamps where supplied.
-- Freshness uses local delivery age; source GNSS timestamps are retained without assuming synchronized clocks.
-- Sources use subscriptions and bounded getters. A missing optional provider
-  does not prevent time/GPS recording. Stale/invalid readings produce gaps.
-- Samples are committed in immutable JSONL chunks, at most 64 rows / 1 MiB each,
-  flushed every five seconds or at 64 rows. Summary checkpoints follow committed
-  chunks; JSON writes use temporary files and rename, with file flushes.
-- Files live under `data/trips/<trip-id>/summary.json` and
-  `samples-<sequence>.jsonl`; `data/trips/index.json` is advisory. History
-  scans summaries so an index update failure does not hide valid saved trips.
-- Startup identifies unfinished recordings without silently resuming. Recovery
-  rebuilds calculations from committed chunks, including chunks newer than the
-  summary checkpoint, and adds an explicit missing wall interval. Recovery
-  downtime is excluded from recorded duration and never filled with movement,
-  gear, RPM, fuel or GPS data. Close interrupted trip saves only observed data.
-- App shutdown checkpoints an interrupted trip. Storage failures halt collection,
-  show the error and preserve committed chunks. Unflushed rows remain in memory
-  while the process survives; Finish can retry saving them. A crash can lose the
-  uncommitted batch. Temporary/orphan files are preserved, not auto-cleaned.
-- Retain all trips where storage permits. Settings shows stored trip bytes;
-  this runtime cannot reliably report free filesystem space. Write failures are
-  explicit rather than triggering automatic deletion or reduced detail.
-- Saved trips support a controller character editor for name (48 characters)
-  and annotation (160 characters). Deletion requires explicit confirmation and
-  refuses unexpected files/symlinks. Malformed or unsupported stored schemas are
-  reported and preserved.
-
-### Calculations and presentation
-
-- Recorded duration uses monotonic time and includes stationary periods and
-  in-process delivery gaps. Recovery downtime is tracked separately.
-- Distance requires validated speed; GPS coordinates are not silently converted
-  to distance. The calculation engine uses bounded aligned intervals, trapezoidal
-  speed integration and a strict moving threshold above 1 mph. Threshold
-  crossings are integrated proportionally. Missing speed stays unknown.
-- Gear time holds the previous recognized selector state over a bounded interval.
-  Count direct changes between forward gears only; P/R/N, unresolved NP and gaps
-  do not count as forward shifts. Unknown time has its own bucket.
-- RPM statistics use valid aligned samples; total revolutions integrate RPM over
-  seconds / 60. Fuel calculations require validated cumulative gallons and use
-  matched distance/fuel totals, never averaged MPG samples or tank-level changes.
-- Speed-band buckets use each interval's trapezoidal mean speed, with a separate
-  unknown bucket. Speed bands can be selected from three boundary presets.
-- Elevation requires valid 3D height. Display feet, first/last/net altitude, extrema,
-  coverage, deadband-based estimated ascent/descent, and an explicitly labeled
-  adjacent-sample vertical-speed estimate. Deadband anchors reset at gaps.
-  GPS noise/reference/accuracy remain limitations.
-- Graphs select speed, altitude or 60-second rolling MPG; time or observed-distance
-  axis; full trip or last 60/300/900/3600 seconds. Controller cursor and zoom lists
-  respond to focus or press, with explicit cursor step controls as a fallback.
-  Cursor labels show recorded time, aligned distance and value.
-- Saved graphs stream committed chunks into a bounded projection. Current graphs
-  append new rows. The projection is limited to 2,048 points and conservatively
-  retains gap flags while thinning; it can omit visual detail/extrema. Full
-  samples and calculated totals are separate and are not downsampled.
-  Optional display smoothing never changes recorded values or totals.
-- Trip identity, coverage and unavailable explanations remain visible in every
-  view. Saved summaries never include current vehicle readings. Units are US,
-  measurements use three decimal places, and dates use the specified local
-  12-hour format. Stored precision and timestamps remain independent.
-
-### Still blocked by source evidence
-
-Automatic ignition-on/off recording is **not operational**. Its preference records
-the user's intent and explicitly displays unavailable. The inspected catalog's
-infotainment power modes and energy-shortage state do not establish ignition
-boundaries. Engine stop/start is not used as ignition. Validated ignition signals
-and reliable hidden/sleep lifecycle behavior are still required.
-
-Moving-speed and RPM conversions remain unconfirmed on this M850i. Their raw
-candidates are retained with unavailable physical values, so distance, moving
-time, speed graphs and RPM totals stay unavailable until the conversion is
-validated. No calibrated consumption source is established, so fuel/MPG metrics
-and graphs remain unavailable. Recognized gear enums are categorical;
-availability on this car still depends on actual delivery. These limits do not
-prevent recording elapsed time, GPS coordinates/height and source quality.
-
-Wrapper app listing, packaging, kit assembly and ordinary app downloads now
-recognize `trip_data` as a local app using the existing runtime getter patches.
-No upstream source was vendored.
-
-Files: `app.json`, `main.js`, `sources.js`, `recorder.js`, `storage.js`,
-`calculations.js`, `view.js`, and this README. Preferences use schema version 1
-in `data/settings.json`; trip/sample/calculation schemas are version 1.
-
-Source review only. Tests, linters, formatters, builds, compilation and execution
-validation were not run. No bundle was built or installed.
-
+> Custom graphical dashboards and views, with Settings as the only native screen.
+> Based on the original design from commit 4783f6a; source-dependent limits remain explicit.
 
 ## Goal
 
@@ -115,25 +10,24 @@ speed, MPG and elevation graphs. Tailor units and presentation to the M850i.
 
 ## Pages, screens and navigation
 
-The implemented native layout uses app ID `trip_data`
-and display name **Trip Data**.
+The app ID is `trip_data` and display name is **Trip Data**. All pages below,
+including history, dialogs and text editing, are drawn inside the main canvas.
+Only Settings opens a native iDrive screen.
 
 ### How to move around
 
 The app opens on **Current trip**. A page menu provides Current trip, Trip history
-and Settings. Graphs, Elevation, Fuel and Gears are views of a particular trip:
+and Settings. Elevation, Fuel and Gears are views of a particular trip:
 open them from the current trip or a saved trip's summary.
 
 ```text
 Page menu
   Current trip (opens when the app starts)
-    Graphs
     Elevation
     Fuel
     Gears
   Trip history
     Saved trip summary
-      Graphs
       Elevation
       Fuel
       Gears
@@ -141,7 +35,7 @@ Page menu
 ```
 
 Use the iDrive controller to select pages, actions and list entries. Back from a
-trip's Graphs, Elevation, Fuel or Gears returns to that trip's summary. Back from a
+trip's Elevation, Fuel or Gears returns to that trip's summary. Back from a
 saved summary returns to history; Back from a main page returns to the page menu.
 Touch and swipe behavior remains optional until input support is established.
 
@@ -156,15 +50,17 @@ missing. A requested metric remains unavailable until its source is understood.
 
 ### Current trip: recording controls and live summary
 
-**Layout and data:** recording state at the top (not started, recording,
-finished or interrupted), followed by elapsed recording time, distance, moving
-time, average speed, average moving speed, current speed and top speed. Show fuel
-used and average MPG when reliable consumption data is available.
+**Layout and data:** show recording state at the top (not started, recording,
+finished or interrupted). The left live panel contains speed, gear, distance,
+elapsed timer, altitude, top speed, fuel used and moving time. The remaining width
+holds a wide speed graph above side-by-side MPG and elevation graphs, all against
+elapsed time. The speed graph title includes average speed and moving average
+speed; the MPG graph title includes average MPG. There is no separate averages panel.
 
 **Actions and navigation:** support both manual and automatic recording. Start begins
 a trip manually; ignition-on starts one automatically if none is active. Finish or
 ignition-off saves and closes it. There is no manual Pause or Resume. Stationary
-periods at or below 1 mph remain part of the trip. Links open this trip's Graphs, Elevation,
+periods at or below 1 mph remain part of the trip. Links open this trip's Elevation,
 Fuel and Gears. History and Settings are available through the page menu.
 
 Before manual Start or ignition-on, show that no trip is active rather than invented totals.
@@ -175,22 +71,18 @@ and clearly identify the missing interval.
 checkpoints. Fuel readings are optional; their absence must not prevent recording
 speed, time and distance.
 
-### Graphs: see how readings changed during the trip
+### Embedded trip graphs
 
-**Layout and data:** one graph at a time, with a selector for speed, elevation or
-fuel economy. Choose elapsed time or distance for the horizontal axis. Label both
-axes and units, show gaps for missing data and show a cursor with the selected
-point's time, distance and value. Current-trip graphs extend as samples arrive;
-saved-trip graphs use stored samples.
+The main trip page includes a wide speed graph with rolling fuel economy and
+elevation graphs side by side below it. All three use elapsed time on the
+horizontal axis. Average and moving average speeds appear in the speed graph title;
+average MPG appears in the MPG graph title. Label axes and units, preserve gaps for
+missing samples and extend current-trip plots as samples arrive. Saved-trip plots
+use stored samples. There is no separate Graphs tab.
 
-**Actions and navigation:** controller rotation moves the cursor. Explicit controls
-select the graph, axis and zoom; when zoom is selected, rotation changes its range.
-Back returns to the originating trip summary.
-
-**Needed:** timestamped samples and distance alignment for a distance axis. Elevation
-requires valid altitude; fuel economy requires validated consumption and matching
-distance. Show an unavailable explanation for a graph without suitable samples.
-Graph smoothing and downsampling must not change calculated trip totals.
+Fuel economy requires validated consumption and matching distance. Show an
+unavailable explanation when suitable samples are absent. Display smoothing and
+downsampling must not change calculated trip totals.
 
 ### Elevation: altitude and climbing summary
 
@@ -199,8 +91,7 @@ altitude change, total ascent, total descent, minimum / maximum altitude and
 vertical speed where supported. Include altitude coverage so missing parts of the
 trip are visible. For a current trip, also show the latest valid altitude.
 
-**Actions and navigation:** open the elevation graph in Graphs for cursor and zoom
-controls; Back returns to this trip's summary.
+**Actions and navigation:** Back or Trip summary returns to this trip's summary.
 
 **Needed:** altitude samples with their own validity, timestamps and documented
 reference. A valid GPS position alone does not establish valid altitude. Ascent,
@@ -208,13 +99,17 @@ descent and vertical speed need documented filtering and noise thresholds.
 
 ### Fuel: consumption and efficiency
 
-**Layout and data:** fuel used, average MPG and a rolling fuel-economy graph, plus
-a table by configurable speed band showing duration, distance, fuel used and MPG.
+**Layout and data:** separate panels hold the fuel-used / average-economy summary,
+rolling MPG graph and speed-band list. New trips use 10-mph bands from 10 through
+200 mph, with under-10, 200+ and unknown buckets. Each row shows duration, distance,
+fuel used and MPG. Saved and recovered trips retain their recorded band policies;
+existing recordings keep their original bucket totals.
 Label the graph's averaging window and each result's data coverage. Use US MPG and US
 gallons, with numeric measurements displayed to three decimal places.
 
-**Actions and navigation:** open the fuel-economy graph in Graphs for cursor and zoom
-controls; Back returns to this trip's summary.
+**Actions and navigation:** Slower speed bands and Faster speed bands page through
+eight rows at a time. Switch between Totals and Coverage columns. Back or Trip
+summary returns to this trip's summary.
 
 **Needed:** validated cumulative fuel consumption or fuel flow, plus time-aligned
 distance. Tank-level changes are insufficient for accurate short-trip consumption.
@@ -223,11 +118,12 @@ usable. Average MPG uses total matched distance and fuel, not averaged MPG sampl
 
 ### Gears: time, shifts and engine-speed statistics
 
-**Layout and data:** a per-gear table of duration, distance and shift count. Add
-fuel used and MPG per gear only when matching consumption data exists. Show RPM
-minimum, maximum, time-weighted average and total engine revolutions when supported.
-Keep unknown gear intervals separate and identify Park, Reverse and Neutral.
-An optional gear-by-speed table can combine the gear and speed-band breakdowns.
+**Layout and data:** show all eight forward gears together in a table of duration,
+distance, shift count and coverage, without scrolling. Add fuel used and MPG per
+gear only when matching consumption data exists. One summary card combines RPM
+minimum, maximum, time-weighted average and total engine revolutions when supported,
+along with RPM coverage and time in Park, Reverse, Neutral, combined N/P and unknown
+states. An optional gear-by-speed table can combine the gear and speed-band breakdowns.
 
 **Actions and navigation:** open from the selected trip's summary; Back returns to
 that summary. This page describes recorded behavior and does not control the gearbox.
@@ -243,7 +139,7 @@ distance and finished / interrupted status. Selecting an entry opens its summary
 
 **Summary layout and data:** the selected trip's totals for time, distance, speed
 and available fuel data, plus recording status and coverage. Links open that saved
-trip's Graphs, Elevation, Fuel and Gears, using the same layouts as the current trip.
+trip's Elevation, Fuel and Gears, using the same layouts as the current trip.
 Saved summaries do not show current vehicle readings as part of the old trip.
 
 **Actions and navigation:** rename or annotate a trip; require explicit confirmation
@@ -307,11 +203,12 @@ making all trip statistics unavailable.
 | Calculations | Distance, speed, fuel, altitude, gear and RPM statistics with coverage |
 | Storage and history | Trip index, summaries, sample chunks, annotations and retention |
 | Preferences | Units, thresholds, recording policy and presentation options |
-| Wrapper integration | Implemented local app routing and packaging through the existing wrapper |
+| Wrapper integration | Future app routing and packaging through the existing wrapper |
 
 These are proposed responsibilities, not a fixed file structure. Use the upstream
 runtime and SDK through the wrapper; share suitable local research deliberately.
-App source and a manifest now exist; packaging has not been run.
+The manifest defines a canvas MAIN and one native SETTINGS screen. The app uses
+the upstream canvas/renderer runtime through the wrapper.
 
 ### Metrics and calculation rules
 
@@ -350,7 +247,7 @@ App source and a manifest now exist; packaging has not been run.
 #### Gear and speed breakdowns
 
 - Per gear: duration, distance, fuel used, MPG and shift count where available.
-- Per configurable speed band: duration, distance, fuel and MPG.
+- Per 10-mph speed band: duration, distance, fuel and MPG.
 - Optional gear-by-speed table after the basic summaries are useful.
 - Attribute distance and fuel to time-aligned valid intervals; exclude mismatched
   or unknown intervals from that bucket's efficiency calculation.
@@ -416,3 +313,61 @@ missing altitude must not invalidate otherwise valid coordinates.
 ## Remaining preference
 
 - Sample frequency / recording detail is still undecided; retain the selected detail throughout the trip rather than silently reducing it.
+
+## Graphical implementation
+
+Version 1.2 revises the graphical layout and navigation. Version 1.1 replaced the
+native-screen implementation using the original design recovered with read-only
+Git history from commit `4783f6a`.
+
+- `MAIN` is a 1600 x 520 canvas using the same `ctx.canvas`, renderer and
+  `kit/gauges.frame` path as upstream dashboards. The layout uses large trip
+  readouts, M-color accents, coverage bars and custom chart/table/card views.
+- Trip, Elevation, Fuel, Gears, History and the page menu are logical
+  views inside that canvas. Recovery actions, delete confirmation and the
+  name/annotation keyboard are graphical too. `SETTINGS` is the sole native
+  screen; it returns to the same graphical view.
+- The controller changes focus and selects actions. On the GPU/input-gate path,
+  rotation moves graphical focus, press selects, left tilt goes Back and right
+  tilt changes views. The upstream-style bar provides Next view, Previous,
+  Select, Next, Back and Settings controls for software rendering and previews.
+- Next view cycles Trip -> Elevation -> Fuel -> Gears -> History -> Trip.
+  The Trip page has a wide speed graph above MPG and elevation graphs; averages
+  are shown in graph titles and moving time is in the live vehicle panel.
+- Fuel has paged speed-band rows and a Totals/Coverage column switch. Gears shows
+  all eight forward gears at once, with a Totals/Coverage switch and one summary
+  card. Saved-trip identity is retained across views. History keeps its selected
+  trip when returning from a summary. Recording remains independent of view changes.
+- The graphical keyboard supports case, spaces, punctuation, caret movement,
+  erase, name/annotation selection, Save and Cancel. Delete defaults to Cancel
+  and requires a separate confirmation.
+- Existing recording, checkpoint, recovery and sample formats remain at schema
+  version 1. Existing trips and settings do not need conversion. Plot projections
+  remain bounded; presentation smoothing does not alter recordings or totals.
+
+### Packaging and preview
+
+Repackage the app to replace any older native-screen build in `dist/`:
+
+```powershell
+./out/mgu preview trip_data --build --out out/trip-data.png
+./out/mgu preview trip_data --out out/trip-elevation.png --click BTN_PAGE
+./out/mgu preview trip_data --out out/trip-fuel.png --click BTN_PAGE --click BTN_PAGE
+./out/mgu preview trip_data --out out/trip-gears.png --click BTN_PAGE --click BTN_PAGE --click BTN_PAGE
+./out/mgu preview trip_data --out out/trip-settings.png --click BTN_SETTINGS
+```
+
+These commands are instructions; they were not run during implementation.
+
+### Data limits
+
+The graphical remake preserves the existing source-quality restrictions.
+Validated ignition transitions and calibrated consumption remain unavailable;
+automatic recording cannot yet operate. Moving-speed and RPM scaling still need
+vehicle validation, so their physical values and dependent totals stay
+unavailable. Recording time, independently valid GPS coordinates/height and
+recognized gear states remain usable when delivered. No preview data is invented
+to fill missing vehicle measurements.
+
+Source review only. Tests, linters, formatters, builds, compilation and preview
+execution were not run. No generated bundles or executable files were modified.

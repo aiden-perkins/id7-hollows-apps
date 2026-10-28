@@ -20,6 +20,9 @@ import (
 //go:embed preview_host.cjs
 var previewHostSource []byte
 
+//go:embed preview_native.cjs
+var previewNativeSource []byte
+
 type previewReply struct {
 	OK bool
 	Error string
@@ -39,6 +42,7 @@ type previewHost struct {
 func (a *application) startPreviewHost(dir string) (*previewHost, error) {
 	hostFile := filepath.Join(dir, "host.cjs")
 	if err := writeFile(hostFile, previewHostSource, 0600); err != nil { return nil, err }
+	if err := writeFile(filepath.Join(dir, "preview_native.cjs"), previewNativeSource, 0600); err != nil { return nil, err }
 	cmd := exec.CommandContext(a.ctx, a.node, "--unhandled-rejections=strict", hostFile)
 	cmd.Dir, cmd.Stderr = a.root, a.err
 	input, err := cmd.StdinPipe()
@@ -148,9 +152,10 @@ func (a *application) preview(args []string) error {
 	section := flags.String("section", "", "section setting, such as mode, lights, or status in MGU Lab")
 	realtime := flags.Bool("realtime", false, "advance demo time at wall-clock speed")
 	build := flags.Bool("build", false, "package the selected app before previewing")
-	var sets, clicks repeatedOption
+	var sets, clicks, focuses repeatedOption
 	flags.Var(&sets, "set", "override KEY=VALUE (repeatable)")
-	flags.Var(&clicks, "click", "press a named button before warmup (repeatable)")
+	flags.Var(&clicks, "click", "press COMPONENT[:ROW] or @back before warmup (repeatable; rows are zero-based)")
+	flags.Var(&focuses, "focus", "focus COMPONENT[:ROW] after clicks without pressing it (repeatable)")
 	flags.Usage = func() {
 		fmt.Fprintln(a.err, "Usage: mgu preview APP [options] [BUTTON ...]")
 		flags.PrintDefaults()
@@ -198,6 +203,13 @@ func (a *application) preview(args []string) error {
 	settings, err := previewSettings(spec, sets, *section)
 	if err != nil { return err }
 	if *record != "" { *gpu = true }
+	if *gpu {
+		hasCanvas := false
+		for _, raw := range list(spec["screens"]) {
+			if text(obj(raw)["kind"]) == "canvas" { hasCanvas = true; break }
+		}
+		if !hasCanvas { return errors.New("native-menu previews use software rendering; omit --gpu and --record") }
+	}
 	if *renderer != "" && !*gpu { return errors.New("--renderer requires --gpu or --record") }
 	if *gpu && (*out != "" || *gifOut != "" || *framesDir != "") {
 		if _, _, err := a.rendererProgram(*renderer); err != nil { return err }
@@ -220,6 +232,10 @@ func (a *application) preview(args []string) error {
 	for _, button := range append(clicks, buttons...) {
 		if strings.HasPrefix(button, "-") { return errors.New("put preview options before positional button names") }
 		reply, err = host.request(map[string]any{"op": "click", "name": button})
+		if err != nil { return err }
+	}
+	for _, component := range focuses {
+		reply, err = host.request(map[string]any{"op": "focus", "name": component})
 		if err != nil { return err }
 	}
 	reply, err = host.request(map[string]any{"op": "wait", "ms": *warmup * 1000})

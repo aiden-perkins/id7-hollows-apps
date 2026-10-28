@@ -1,262 +1,343 @@
 'use strict';
 const mgu = require('./kit/mgu');
 const { Storage } = require('./storage');
-const { Sources, NOTES } = require('./sources');
+const { Sources, mono } = require('./sources');
 const { Recorder } = require('./recorder');
 const V = require('./view');
+const Dashboard = require('./dashboard');
 
 mgu.run({
     async start(ctx) {
-        const ui = ctx.ui, visible = {}, cache = {};
-        let closed = false, rendering = false, timer = null, notice = '', busy = false;
-        let selectedId = null, saved = null, history = [], projection = null, graphTrip = null, graphLoading = false, graphRequest = 0;
-        let draft = null, editField = 'name', editPosition = 0, usageBytes = null;
-        const graph = { metric: 'speed', axis: 'time', zoomSeconds: 0, cursor: 100, maxIntervalMs: 5000 };
-        const zooms = [0, 60, 300, 900, 3600];
-        const text = (id, value) => {
-            value = String(value);
-            if (cache[id] === value) return;
-            cache[id] = value; ui.text(id, value);
+        const ui = ctx.ui, storage = new Storage(ctx.dataDir);
+        let dirty = true, loop = null, closed = false, lastDraw = 0, busy = false;
+        const changed = () => { dirty = true; if (loop) loop.kick(); };
+        const sources = new Sources(ctx, changed), recorder = new Recorder(storage, sources, changed);
+        const state = {
+            page: 'trip', saved: null, focus: 0, focusMemory: {}, modal: null, draft: null,
+            history: [], tablePages: { fuel: 0 }, tableCoverage: { fuel: false, gears: false }, projection: null, projectionId: null,
+            graphLoading: false, loadingId: null, graphRequest: 0, notice: '', noticeUntil: 0, usageBytes: null,
+            graph: { metric: 'speed', axis: 'time', zoomSeconds: 0, cursorAt: null },
         };
-        const rows = async (id, labels) => {
-            const key = id + ':count';
-            if (cache[key] !== labels.length) { cache[key] = labels.length; await ui.rows(id, labels.length); }
-            for (let i = 0; i < labels.length; i++) {
-                const rowKey = id + ':' + i;
-                if (cache[rowKey] !== labels[i]) { cache[rowKey] = labels[i]; await ui.text(id, labels[i], i); }
-            }
-        };
-        const storage = new Storage(ctx.dataDir);
-        const sources = new Sources(ctx, () => {});
-        const recorder = new Recorder(storage, sources, () => {});
-        const trip = () => selectedId ? saved : recorder.active;
-        const title = (s) => !s ? 'No trip selected' : (selectedId ? s.name + ' | ' + V.date(s.startedAt) : 'Current trip | ' + V.date(s.startedAt));
-        const summaryState = () => selectedId ? 'SUMMARY' : 'MAIN';
-        async function parent(child, name) {
-            const c = ui.comp(child), p = ui.comp(name);
-            if (c && p && c.setProperty && p.getId) {
-                let timeout;
-                try {
-                    await Promise.race([c.setProperty('ParentState', p.getId(), 'UInt'), new Promise((resolve, reject) => {
-                        timeout = setTimeout(() => reject(new Error('Native Back target timed out; use the on-screen Back control')), 2000);
-                    })]);
-                } catch (e) { notice = e.message; ctx.log.warn(e); }
-                finally { clearTimeout(timeout); }
+        const pages = ['trip', 'elevation', 'fuel', 'gears', 'history'];
+        const selectedTrip = () => state.saved || recorder.active;
+        const focusKey = () => ['history', 'menu', 'edit', 'actions'].includes(state.page) ? state.page :
+            state.page + ':' + (state.saved ? state.saved.id : 'current');
+        const tell = (message) => { state.notice = message; state.noticeUntil = Date.now() + 7000; changed(); };
+        const action = (id, label, run, enabled, description) => ({ id, label, run, enabled: enabled !== false, description: description || '' });
+        let grabbed = false, rawPosition = null, rawPressed = false, rawDeflection = 0, relayAt = -Infinity, lastSelect = -Infinity;
+        const shown = () => ui.isVisible('MAIN') && (!ui.hasFocus || ui.hasFocus('MAIN'));
+        function syncController() {
+            const next = shown() && !!(ctx.display && ctx.display.active && ctx.display.active('MAIN'));
+            if (next !== grabbed) {
+                grabbed = next; rawPosition = null; rawPressed = false; rawDeflection = 0;
+                if (ctx.controller) ctx.controller.grab(next);
             }
         }
-        async function show(name) { await ui.open(name); }
-        async function summary(s) { if (graphTrip !== s.id) projection = null; selectedId = s.id; saved = s; await show('SUMMARY'); }
-        async function current() { if (!recorder.active || graphTrip !== recorder.active.id) projection = null; selectedId = null; saved = null; await show('MAIN'); }
+        function route(page) {
+            state.focusMemory[focusKey()] = state.focus;
+            state.page = page;
+            state.focus = state.focusMemory[focusKey()] || 0;
+            changed();
+        }
         async function refreshHistory() {
-            const loaded = storage.history().filter((s) => !recorder.active || s.id !== recorder.active.id);
-            if (selectedId && history.some((s) => s.id === selectedId)) {
-                const oldIds = history.map((s) => s.id);
-                history = oldIds.map((id) => loaded.find((s) => s.id === id)).filter(Boolean)
-                    .concat(loaded.filter((s) => !oldIds.includes(s.id)));
-            } else history = loaded;
-            usageBytes = storage.usage();
-            await rows('HISTORY_LIST', history.length ? history.map((s) => s.name + ' | ' + V.date(s.startedAt) + ' | ' +
-                (s.status === 'recording' ? 'interrupted (process restart)' : s.status) + ' | ' + V.number(s.stats.durationMs / 1000, 's') +
-                ' | ' + (s.stats.speedMs ? V.number(s.stats.distanceMiles, 'mi') : 'distance unavailable')) : ['No saved trips']);
+            const loaded = storage.history().filter((s) => !recorder.active || recorder.active.id !== s.id);
+            const ids = state.history.map((s) => s.id);
+            state.history = ids.map((id) => loaded.find((s) => s.id === id)).filter(Boolean).concat(loaded.filter((s) => !ids.includes(s.id)));
+            recorder.history = storage.history();
+            recorder.interrupted = recorder.history.filter((s) => s.status !== 'finished' && (!recorder.active || s.id !== recorder.active.id));
+            state.usageBytes = storage.usage();
+            changed();
         }
-        async function prepareGraph(metric) {
-            const s = trip(); if (!s) throw new Error('No trip selected');
-            if (metric) graph.metric = metric;
-            graph.maxIntervalMs = s.policy.maxIntervalMs;
-            if (graphTrip === s.id && projection) return;
-            const request = ++graphRequest; graphLoading = true; notice = 'Loading recorded graph samples...';
+        function resetProjection() {
+            ++state.graphRequest; state.projection = null; state.projectionId = null; state.graphLoading = false; state.loadingId = null;
+            state.graph.cursorAt = null; state.tablePages = { fuel: 0 }; state.tableCoverage = { fuel: false, gears: false };
+        }
+        async function loadProjection() {
+            const trip = selectedTrip();
+            if (!trip || state.projectionId === trip.id && state.projection || state.graphLoading && state.loadingId === trip.id) return;
+            const request = ++state.graphRequest, id = trip.id;
+            state.graphLoading = true; state.loadingId = id; state.projection = null; changed();
             try {
-                const extra = recorder.active && recorder.active.id === s.id ? recorder.buffer.slice() : [];
-                const loaded = await V.load(storage, s.id, extra);
-                if (closed || request !== graphRequest) return;
-                projection = loaded; graphTrip = s.id; notice = '';
-            } finally { if (request === graphRequest) graphLoading = false; }
-        }
-        async function openView(name, metric) {
-            if (!trip()) throw new Error('No trip selected');
-            await parent(name, summaryState());
-            await show(name);
-            if (name === 'GRAPHS') await rows('GRAPH_CURSOR', Array.from({ length: 101 }, (_, i) => 'Cursor ' + i + '% through visible points'));
-            if (name === 'GRAPHS' || name === 'ELEVATION') await prepareGraph(metric);
-        }
-        async function exclusive(action) {
-            if (busy) throw new Error('An operation is already in progress');
-            busy = true;
-            try { return await action(); } finally { busy = false; }
-        }
-        const bind = (id, fn) => ui.onClick(id, async (ev) => {
-            try { await fn(ev); } catch (e) { notice = e.message; ctx.log.warn(e); }
-            render();
-        });
-        const enable = (id, value) => {
-            if (cache[id + ':enabled'] === value) return;
-            cache[id + ':enabled'] = value; ui.enabled(id, value);
-        };
-        async function render() {
-            if (closed || rendering) return;
-            rendering = true;
-            try {
-                const errors = storage.errors.concat(storage.historyErrors || []);
-                const message = recorder.error || notice || (errors.length ? errors.join(' | ') : '');
-                if (visible.MAIN) {
-                    const s = recorder.active;
-                    text('CURRENT_STATE', s ? 'Current trip | ' + s.status : 'No active trip' +
-                        (recorder.interrupted.length ? ' | interrupted trips await recovery in History' : ' | Start manually to record'));
-                    text('CURRENT_TOTALS', s ? V.totals(s) : 'No trip totals before Start.');
-                    const live = sources.sample(require('./sources').mono());
-                    text('CURRENT_SOURCE', s ? 'Current speed: ' + V.number(live.speed.state === 'live' ? live.speed.value : null, 'mph') +
-                        ' | Latest altitude: ' + V.number(live.gps.state === 'live' ? live.gps.altitudeFt : null, 'ft') +
-                        ' | Gear: ' + (live.gear.state === 'live' ? live.gear.value : 'unknown') : 'GPS coordinates and height will be recorded independently.');
-                    text('CURRENT_AUTO', 'Automatic ignition recording: ' + (recorder.settings.automatic ? 'requested, unavailable' : 'off') + '. ' + NOTES.ignition);
-                    text('CURRENT_NOTICE', message || 'Recording continues across this app’s pages while its process remains alive. Hidden/sleep operation is unproven.');
-                    enable('CURRENT_START', !s && !busy); enable('CURRENT_FINISH', !!s && !busy);
-                    ['GRAPHS', 'ELEVATION', 'FUEL', 'GEARS'].forEach((n) => enable('CURRENT_' + n, !!s));
-                }
-                if (visible.SUMMARY && saved) {
-                    text('SUMMARY_TITLE', title(saved));
-                    text('SUMMARY_STATE', (saved.status === 'recording' ? 'Interrupted recording detected after process restart' : saved.status) +
-                        ' | End: ' + V.date(saved.endedAt) + ' | ' + (saved.finishReason || saved.interruptionReason || ''));
-                    text('SUMMARY_TOTALS', V.totals(saved));
-                    text('SUMMARY_NOTES', saved.annotation || 'No annotation');
-                    text('SUMMARY_GAPS', 'Recovery intervals: ' + saved.gaps.length + ' | ' +
-                        (saved.gaps.length ? saved.gaps.map((g) => V.date(g.after) + ' to ' + V.date(g.before) + ': ' + g.reason).join('\n') : 'None recorded') +
-                        ' | Recovery downtime is not added to recorded duration.');
-                    text('SUMMARY_NOTICE', message);
-                    enable('SUMMARY_RECOVER', saved.status !== 'finished' && !recorder.active && !busy);
-                    enable('SUMMARY_CLOSE', saved.status !== 'finished' && !recorder.active && !busy);
-                    enable('SUMMARY_EDIT', saved.status === 'finished' && !busy);
-                    enable('SUMMARY_DELETE', saved.status === 'finished' && !busy);
-                }
-                const s = trip();
-                if (s && (visible.GRAPHS || visible.ELEVATION || visible.FUEL || visible.GEARS)) {
-                    if (recorder.active && recorder.active.id === s.id && projection && graphTrip === s.id) {
-                        recorder.recent.forEach((r) => projection.add(r));
-                    }
-                    ['GRAPHS', 'ELEVATION', 'FUEL', 'GEARS'].forEach((name) => {
-                        if (visible[name]) text(name + '_TRIP', title(s));
-                    });
-                    if (visible.GRAPHS) {
-                        text('GRAPH_OPTIONS', graph.metric + ' | ' + graph.axis + ' axis | ' +
-                            (graph.zoomSeconds ? 'last ' + graph.zoomSeconds + ' seconds' : 'full trip') +
-                            ' | MPG window 60 s | display projection, totals unaffected');
-                        text('GRAPH_CURSOR_VALUE', V.cursor(graphTrip === s.id ? projection : null, graph));
-                        text('GRAPH_NOTICE', graphLoading ? 'Loading...' : message || 'Rotate in the cursor list to move; press to confirm. Missing samples remain gaps.');
-                        await ui.image('GRAPH_IMAGE', V.graph(!graphLoading && graphTrip === s.id ? projection : null, graph, title(s), recorder.settings.smoothing));
-                    }
-                    if (visible.ELEVATION) {
-                        text('ELEVATION_TOTALS', V.elevation(s));
-                        await ui.image('ELEVATION_IMAGE', V.graph(!graphLoading && graphTrip === s.id ? projection : null, Object.assign({}, graph, { metric: 'altitude', axis: 'time' }), title(s), recorder.settings.smoothing));
-                        text('ELEVATION_NOTICE', message || NOTES.gps);
-                    }
-                    if (visible.FUEL) { text('FUEL_TOTALS', V.fuel(s)); text('FUEL_NOTICE', message || NOTES.fuel); }
-                    if (visible.GEARS) { text('GEARS_TOTALS', V.gears(s)); text('GEARS_NOTICE', message || s.policy.gear + ' | ' + NOTES.rpm); }
-                }
-                if (visible.HISTORY) text('HISTORY_NOTICE', message || 'Selecting a saved trip does not stop the current recording.');
-                if (visible.PREFERENCES) {
-                    text('PREF_FIXED', 'US units | 3 decimal measurement places | h:mm:ss AM/PM M-D-YYYY | Moving means > 1 mph; stationary time remains recorded.');
-                    text('PREF_DETAIL', 'Sample interval: ' + recorder.settings.sampleMs + ' ms (fixed per trip)');
-                    text('PREF_AUTO', 'Automatic ignition recording: ' + (recorder.settings.automatic ? 'requested, unavailable' : 'off') + ' | validated source required');
-                    text('PREF_ALTITUDE', 'Elevation deadband: ' + recorder.settings.altitudeThresholdFt + ' ft (fixed per trip)');
-                    text('PREF_SMOOTH', 'Display graph smoothing: ' + (recorder.settings.smoothing ? 'on' : 'off') + ' (does not change totals)');
-                    text('PREF_BANDS', 'Speed-band boundaries: ' + recorder.settings.speedBands.join(', ') + ' mph (fixed per trip)');
-                    text('PREF_STORAGE', 'Trip storage used: ' + V.number(usageBytes === null ? null : usageBytes / 1048576, 'MiB') +
-                        (storage.usageIncomplete ? ' (partial scan)' : '') + ' | Retain all trips; no automatic deletion. Available filesystem space cannot be established by this Node runtime.');
-                    text('PREF_NOTICE', message || 'No maximum recording duration. Chunks/checkpoints are saved every 5 seconds or 64 rows; a storage failure interrupts recording and preserves saved data.');
-                }
-                if (visible.DELETE_TRIP) text('DELETE_NOTICE', message);
-                if (visible.EDIT_METADATA && draft) {
-                    const limit = editField === 'name' ? 48 : 160, value = draft[editField].padEnd(limit, ' ');
-                    text('EDIT_PREVIEW', editField + ': ' + value.slice(Math.max(0, editPosition - 15), editPosition) + '[' +
-                        (value[editPosition] === ' ' ? '_' : value[editPosition]) + ']' + value.slice(editPosition + 1, editPosition + 25));
-                    text('EDIT_POSITION', 'Character ' + (editPosition + 1) + '/' + limit + ' | Save commits both fields; Back cancels uncommitted changes.');
-                    text('EDIT_NOTICE', message);
-                }
-            } catch (e) { notice = 'Display: ' + e.message; ctx.log.warn(e); }
-            finally { rendering = false; }
-        }
-        bind('CURRENT_START', () => exclusive(() => { recorder.start(); selectedId = null; graphTrip = null; projection = null; notice = 'Recording started manually'; }));
-        bind('CURRENT_FINISH', () => exclusive(async () => { const s = recorder.finish('manual'); await summary(s); graphTrip = null; }));
-        bind('CURRENT_MENU', () => show('MENU'));
-        bind('CURRENT_RETRY', () => { sources.retry(); notice = 'Retrying vehicle providers'; });
-        ['CURRENT', 'SUMMARY'].forEach((prefix) => {
-            ['GRAPHS', 'ELEVATION', 'FUEL', 'GEARS'].forEach((name) => bind(prefix + '_' + name, () => openView(name, name === 'ELEVATION' ? 'altitude' : null)));
-        });
-        bind('MENU_CURRENT', current);
-        bind('MENU_HISTORY', async () => { await refreshHistory(); await show('HISTORY'); });
-        bind('MENU_SETTINGS', async () => { usageBytes = storage.usage(); await show('PREFERENCES'); });
-        bind('HISTORY_LIST', (ev) => { const s = history[ev.row]; if (s) return summary(s); });
-        bind('HISTORY_REFRESH', refreshHistory);
-        bind('HISTORY_MENU', () => show('MENU'));
-        bind('SUMMARY_HISTORY', async () => { await refreshHistory(); await show('HISTORY'); });
-        bind('SUMMARY_RECOVER', () => exclusive(async () => { await recorder.recover(saved.id); graphTrip = null; projection = null; notice = 'Recovered with an explicit missing interval'; await current(); }));
-        bind('SUMMARY_CLOSE', () => exclusive(async () => { const s = await recorder.closeInterrupted(saved.id); await summary(s); }));
-        bind('SUMMARY_DELETE', async () => { text('DELETE_TITLE', title(saved)); await show('DELETE_TRIP'); });
-        bind('DELETE_CONFIRM', () => exclusive(async () => {
-            if (!saved || recorder.active && recorder.active.id === saved.id) throw new Error('Cannot delete the active trip');
-            storage.delete(saved.id); saved = null; selectedId = null; graphTrip = null; projection = null;
-            await refreshHistory(); recorder.history = storage.history(); recorder.interrupted = recorder.history.filter((s) => s.status !== 'finished' && (!recorder.active || s.id !== recorder.active.id));
-            notice = 'Trip deleted'; await show('HISTORY');
-        }));
-        bind('DELETE_CANCEL', () => show('SUMMARY'));
-        bind('SUMMARY_EDIT', () => {
-            if (!saved || saved.status !== 'finished') throw new Error('Close interrupted recording before editing');
-            draft = { name: saved.name, annotation: saved.annotation || '' }; editPosition = 0; editField = 'name';
-            return show('EDIT_METADATA');
-        });
-        bind('EDIT_FIELD', () => { editField = editField === 'name' ? 'annotation' : 'name'; editPosition = 0; });
-        bind('EDIT_PREV', () => { const limit = editField === 'name' ? 48 : 160; editPosition = (editPosition + limit - 1) % limit; });
-        bind('EDIT_NEXT', () => { const limit = editField === 'name' ? 48 : 160; editPosition = (editPosition + 1) % limit; });
-        const characters = ' ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_.:,/';
-        bind('EDIT_CHARACTER', async () => { await rows('CHARACTER_LIST', characters.split('').map((c) => c === ' ' ? 'Space / erase' : c)); await show('CHARACTERS'); });
-        bind('CHARACTER_LIST', (ev) => {
-            if (draft && characters[ev.row] !== undefined) {
-                const limit = editField === 'name' ? 48 : 160, value = draft[editField].padEnd(limit, ' ');
-                draft[editField] = value.slice(0, editPosition) + characters[ev.row] + value.slice(editPosition + 1);
+                const pending = recorder.active && recorder.active.id === id ? recorder.buffer.slice() : [];
+                const projection = await V.load(storage, id, pending);
+                if (closed || request !== state.graphRequest || !selectedTrip() || selectedTrip().id !== id) return;
+                state.projection = projection; state.projectionId = id;
+            } finally {
+                if (request === state.graphRequest) { state.graphLoading = false; state.loadingId = null; changed(); }
             }
-            return show('EDIT_METADATA');
+        }
+        async function openPage(page) {
+            route(page);
+            if (page === 'history') await refreshHistory();
+            if (['trip', 'elevation', 'fuel'].includes(page)) await loadProjection();
+        }
+        async function showCurrent() {
+            if (state.saved) resetProjection();
+            state.saved = null; route('trip'); await loadProjection();
+        }
+        async function showSaved(trip) {
+            if (!state.saved || state.saved.id !== trip.id) resetProjection();
+            state.saved = trip; route('trip'); await loadProjection();
+        }
+        async function settings() {
+            if (busy) return;
+            if (state.modal || state.page === 'edit') { tell('Close this dialog before opening Settings.'); return; }
+            state.usageBytes = storage.usage();
+            if (ctx.controller) ctx.controller.grab(false); grabbed = false;
+            refreshSettings(); await ui.open('SETTINGS');
+        }
+        async function exclusive(fn) {
+            if (busy) { tell('An operation is already in progress.'); return; }
+            busy = true; changed();
+            try { await fn(); } finally { busy = false; changed(); }
+        }
+        async function start() {
+            recorder.start(); state.saved = null; resetProjection(); route('trip'); await loadProjection(); tell('Recording started');
+        }
+        async function finish() {
+            const trip = recorder.finish('manual');
+            resetProjection(); await refreshHistory();
+            state.focusMemory.history = Math.max(0, state.history.findIndex((s) => s.id === trip.id));
+            await showSaved(trip); tell('Trip saved');
+        }
+        async function recover() {
+            const id = state.saved && state.saved.id; if (!id) return;
+            await recorder.recover(id); state.saved = null; resetProjection(); route('trip'); await loadProjection();
+            tell('Trip recovered. The missing interval remains a gap.');
+        }
+        async function closeInterrupted() {
+            if (!state.saved) return;
+            const trip = await recorder.closeInterrupted(state.saved.id);
+            resetProjection(); await refreshHistory(); await showSaved(trip);
+            tell('Closed at the last saved sample.');
+        }
+        function confirmDelete() {
+            const target = state.saved;
+            if (!target || target.status !== 'finished') return;
+            state.notice = ''; state.noticeUntil = 0;
+            state.modal = { title: 'Delete saved trip?', message: target.name,
+                detail: 'Its recording and annotation will be permanently deleted.', focus: 0,
+                actions: [action('cancel', 'Cancel', () => { state.modal = null; changed(); }),
+                    action('delete', 'Delete trip', () => exclusive(async () => {
+                        if (recorder.active && recorder.active.id === target.id) throw new Error('Cannot delete the active trip');
+                        storage.delete(target.id); state.modal = null; state.saved = null; resetProjection();
+                        await refreshHistory(); route('history'); tell('Saved trip deleted');
+                    }))] };
+            changed();
+        }
+        function edit() {
+            const trip = state.saved;
+            if (!trip || trip.status !== 'finished') return;
+            state.draft = { name: trip.name, annotation: trip.annotation || '', field: 'name', caret: trip.name.length, lower: false };
+            route('edit'); state.focus = 0;
+        }
+        function keyboard() {
+            const d = state.draft; if (!d) return [];
+            const insert = (character) => {
+                const limit = d.field === 'name' ? 48 : 160, value = d[d.field];
+                if (value.length >= limit) { tell('Character limit reached.'); return; }
+                d[d.field] = value.slice(0, d.caret) + character + value.slice(d.caret); d.caret += character.length; changed();
+            };
+            const letters = (d.lower ? 'abcdefghijklmnopqrstuvwxyz' : 'ABCDEFGHIJKLMNOPQRSTUVWXYZ') + '0123456789';
+            const keys = letters.split('').map((character) => action('key_' + character, character, () => insert(character)));
+            [' ', '-', '.', ',', '/', ':', '_'].forEach((character) => keys.push(action('key_' + character, character === ' ' ? 'Space' : character, () => insert(character))));
+            keys.push(action('left', '<', () => { d.caret = Math.max(0, d.caret - 1); changed(); }));
+            keys.push(action('right', '>', () => { d.caret = Math.min(d[d.field].length, d.caret + 1); changed(); }));
+            keys.push(action('erase', 'Erase', () => {
+                if (d.caret > 0) { const value = d[d.field]; d[d.field] = value.slice(0, d.caret - 1) + value.slice(d.caret); d.caret--; changed(); }
+            }));
+            keys.push(action('case', 'Case', () => { d.lower = !d.lower; changed(); }));
+            keys.push(action('field', 'Name / Note', () => { d.field = d.field === 'name' ? 'annotation' : 'name'; d.caret = d[d.field].length; changed(); }));
+            keys.push(action('save', 'Save', () => exclusive(async () => {
+                state.saved = storage.edit(state.saved.id, d.name.trim(), d.annotation.trim());
+                state.history = state.history.map((s) => s.id === state.saved.id ? state.saved : s);
+                state.draft = null; route('trip'); tell('Trip details saved');
+            })));
+            keys.push(action('cancel', 'Cancel', () => { state.draft = null; route('trip'); }));
+            return keys;
+        }
+        function tablePage(delta) {
+            const trip = selectedTrip(), bands = trip ? trip.policy.speedBands : recorder.settings.speedBands;
+            const count = Math.ceil((bands.length + 2) / 8);
+            state.tablePages.fuel = ((state.tablePages.fuel || 0) + delta + count) % count;
+            changed();
+        }
+        function availableActions() {
+            const trip = selectedTrip(), saved = state.saved, active = recorder.active;
+            if (state.page === 'trip') {
+                if (!saved) return [
+                    action('record', active ? 'Finish trip' : 'Start trip', () => exclusive(active ? finish : start), !!active || !recorder.interrupted.length),
+                    action('elevation', 'Elevation', () => openPage('elevation')),
+                    action('fuel', 'Fuel', () => openPage('fuel')),
+                    action('gears', 'Gears', () => openPage('gears')),
+                    action('history', 'Trip history', () => openPage('history')),
+                ];
+                return ['elevation', 'fuel', 'gears'].map((page) => action(page, page[0].toUpperCase() + page.slice(1), () => openPage(page))).concat([
+                    action('actions', 'Trip actions', () => route('actions')), action('history', 'Trip history', () => openPage('history')),
+                ]);
+            }
+            if (state.page === 'history') return state.history.map((s) => action(s.id, s.name, () => showSaved(s))).concat([
+                action('refresh', 'Refresh history', refreshHistory), action('current', 'Current trip', showCurrent), action('menu', 'Page menu', () => route('menu')),
+            ]);
+            if (state.page === 'menu') return [
+                action('current', 'Current trip', showCurrent, true, active ? 'Recording / ' + V.duration(active.stats.durationMs) : 'Start and review your current drive'),
+                action('history', 'Trip history', () => openPage('history'), true, recorder.interrupted.length ? 'Interrupted trips await recovery' : 'Saved trips, notes and recovery'),
+                action('settings', 'Settings', settings, true, 'Recording detail, units and presentation'),
+            ];
+            if (state.page === 'actions') return [
+                action('edit', 'Rename / annotate', edit, !!saved && saved.status === 'finished', 'Edit the saved trip with the graphical keyboard'),
+                action('delete', 'Delete saved trip', confirmDelete, !!saved && saved.status === 'finished', 'Review and confirm before deleting'),
+                action('recover', 'Recover recording', () => exclusive(recover), !!saved && saved.status !== 'finished' && !active, 'Continue with an explicit missing interval'),
+                action('close', 'Close interrupted trip', () => exclusive(closeInterrupted), !!saved && saved.status !== 'finished' && !active, 'Keep only the samples already recorded'),
+            ];
+            if (state.page === 'elevation') return [
+                action('back', 'Trip summary', () => route('trip')),
+            ];
+            const columns = () => action('columns', state.tableCoverage[state.page] ? 'Columns: Coverage' : 'Columns: Totals', () => {
+                state.tableCoverage[state.page] = !state.tableCoverage[state.page]; changed();
+            });
+            if (state.page === 'fuel') return [
+                action('previousRows', 'Slower speed bands', () => tablePage(-1)),
+                action('nextRows', 'Faster speed bands', () => tablePage(1)),
+                columns(), action('summary', 'Trip summary', () => route('trip')),
+            ];
+            if (state.page === 'gears') return [columns(), action('summary', 'Trip summary', () => route('trip'))];
+            if (state.page === 'edit') return keyboard();
+            return [];
+        }
+        function move(steps) {
+            if (busy) return;
+            if (state.modal) { state.modal.focus = (state.modal.focus + steps % 2 + 2) % 2; changed(); return; }
+            const count = availableActions().length;
+            if (count) state.focus = (state.focus + steps % count + count) % count;
+            changed();
+        }
+        async function select() {
+            if (busy || Date.now() - lastSelect < 160) return;
+            lastSelect = Date.now();
+            const list = state.modal ? state.modal.actions : availableActions(), index = state.modal ? state.modal.focus : state.focus;
+            const chosen = list[index]; if (!chosen) return;
+            if (!chosen.enabled) { tell(recorder.interrupted.length && !recorder.active ? 'Recover or close interrupted trips in History first.' : 'This action is unavailable for the selected trip.'); return; }
+            await chosen.run(); changed();
+        }
+        function back() {
+            if (busy) return;
+            if (state.modal) { state.modal = null; changed(); return; }
+            if (state.page === 'edit') { state.draft = null; route('trip'); return; }
+            if (['elevation', 'fuel', 'gears', 'actions'].includes(state.page)) { route('trip'); return; }
+            if (state.page === 'trip' && state.saved) { route('history'); return; }
+            if (state.page === 'menu') return showCurrent();
+            route('menu');
+        }
+        async function nextPage() {
+            if (busy) return;
+            if (state.modal || state.page === 'edit') { back(); return; }
+            const index = pages.indexOf(state.page);
+            await openPage(pages[(index + 1) % pages.length]);
+        }
+        const bind = (name, fn) => ui.onClick(name, async () => {
+            try { await fn(); } catch (e) { tell(e.message); ctx.log.warn(e); }
+            if (ui.isVisible('SETTINGS')) refreshSettings();
+            changed();
         });
-        bind('EDIT_SAVE', () => exclusive(async () => { if (!draft || !saved) return; saved = storage.edit(saved.id, draft.name.trim(), draft.annotation.trim()); draft = null; await show('SUMMARY'); }));
-        bind('EDIT_CANCEL', () => { draft = null; return show('SUMMARY'); });
-        ['GRAPHS', 'ELEVATION', 'FUEL', 'GEARS'].forEach((name) => bind(name + '_BACK', () => show(summaryState())));
-        bind('ELEVATION_GRAPH', () => openView('GRAPHS', 'altitude'));
-        bind('FUEL_GRAPH', () => openView('GRAPHS', 'mpg'));
-        bind('GRAPH_TYPE', () => { const list = ['speed', 'altitude', 'mpg']; graph.metric = list[(list.indexOf(graph.metric) + 1) % list.length]; });
-        bind('GRAPH_AXIS', () => { graph.axis = graph.axis === 'time' ? 'distance' : 'time'; });
-        bind('GRAPH_CURSOR', (ev) => { if (Number.isInteger(ev.row) && ev.row >= 0 && ev.row <= 100) graph.cursor = ev.row; });
-        const cursorComp = ui.comp('GRAPH_CURSOR');
-        if (cursorComp && cursorComp.on) cursorComp.on('focus', (ev) => {
-            if (ev && Number.isInteger(ev.row) && ev.row >= 0 && ev.row <= 100) { graph.cursor = ev.row; render(); }
+        bind('BTN_PAGE', nextPage); bind('BTN_PREV', () => move(-1)); bind('BTN_SELECT', select);
+        bind('BTN_NEXT', () => move(1)); bind('BTN_BACK', back); bind('BTN_SETTINGS', settings);
+        const labels = {};
+        function nativeText(name, value) { if (labels[name] !== value) { labels[name] = value; ui.text(name, value); } }
+        function refreshSettings() {
+            const p = recorder.settings;
+            nativeText('PREF_DETAIL', 'Recording interval: ' + p.sampleMs + ' ms (fixed per trip)');
+            nativeText('PREF_AUTO', 'Automatic ignition recording: ' + (p.automatic ? 'requested, unavailable' : 'off'));
+            nativeText('PREF_ALTITUDE', 'Elevation noise deadband: ' + p.altitudeThresholdFt + ' ft');
+            nativeText('PREF_SMOOTH', 'Display graph smoothing: ' + (p.smoothing ? 'on' : 'off'));
+            nativeText('PREF_BANDS', 'New trips: 0-10 mph, then 10 mph bands to 200 mph; 200+ and unknown remain separate. Saved trips retain their recorded bands.');
+            nativeText('PREF_STORAGE', 'Trip storage: ' + (state.usageBytes === null ? '--' : (state.usageBytes / 1048576).toFixed(3)) + ' MiB' +
+                (storage.usageIncomplete ? ' (partial scan)' : '') + '. All recordings are retained; nothing is automatically deleted.');
+            nativeText('PREF_NOTICE', recorder.error || state.notice || storage.errors.join(' | ') ||
+                'US units / three decimals / 12-hour dates. Ignition events, consumption and speed/RPM calibration remain unavailable.');
+        }
+        const setting = (name, key, options) => bind(name, () => {
+            const value = recorder.settings[key], next = options ? options[(options.indexOf(value) + 1) % options.length] : !value;
+            recorder.configure(key, next); refreshSettings();
         });
-        bind('GRAPH_PREV', () => { graph.cursor = Math.max(0, graph.cursor - 1); });
-        bind('GRAPH_NEXT', () => { graph.cursor = Math.min(100, graph.cursor + 1); });
-        bind('GRAPH_ZOOM', async () => { await rows('ZOOM_LIST', zooms.map((s) => s ? 'Last ' + s + ' seconds' : 'Full trip')); await show('ZOOM'); });
-        bind('ZOOM_LIST', (ev) => { if (zooms[ev.row] !== undefined) graph.zoomSeconds = zooms[ev.row]; return show('GRAPHS'); });
-        const zoomComp = ui.comp('ZOOM_LIST');
-        if (zoomComp && zoomComp.on) zoomComp.on('focus', (ev) => {
-            if (ev && zooms[ev.row] !== undefined) { graph.zoomSeconds = zooms[ev.row]; text('ZOOM_VALUE', graph.zoomSeconds ? 'Last ' + graph.zoomSeconds + ' seconds' : 'Full trip'); }
+        setting('PREF_DETAIL', 'sampleMs', [500, 1000, 2000]); setting('PREF_AUTO', 'automatic');
+        setting('PREF_ALTITUDE', 'altitudeThresholdFt', [5, 10, 20]); setting('PREF_SMOOTH', 'smoothing');
+        bind('PREF_RETRY', () => { sources.retry(); tell('Retrying vehicle providers'); refreshSettings(); });
+        bind('PREF_BACK', () => ui.open('MAIN'));
+        async function raw(v) {
+            if (!grabbed || !shown() || !v) return;
+            if ([15, 'SIGNAL_UNGUELTIG'].includes(v.frontRotaryEncoderPushButton) && [15, 'SIGNAL_UNGUELTIG'].includes(v.frontRotaryEncoderDeflection)) return;
+            const pressed = [1, 2, 'DREHGEBER_KURZ_GEDRUECKT', 'DREHGEBER_LANG_GEDRUECKT'].includes(v.frontRotaryEncoderPushButton);
+            const pos = v.frontRotaryEncoderOperation, deflection = v.frontRotaryEncoderDeflection;
+            if (Number.isInteger(pos) && pos >= 0 && pos < 65535) {
+                if (rawPosition !== null) {
+                    const delta = ((pos - rawPosition + 32768) & 0xffff) - 32768;
+                    if (delta && Math.abs(delta) <= 64) move(Math.max(-16, Math.min(16, delta)));
+                }
+                rawPosition = pos;
+            }
+            const directions = { 1: 'up', 4: 'right', 7: 'down', 10: 'left',
+                NORD_KURZ_GEDRUECKT: 'up', OST_KURZ_GEDRUECKT: 'right', SUED_KURZ_GEDRUECKT: 'down', WEST_KURZ_GEDRUECKT: 'left' };
+            const direction = directions[deflection], previousDirection = rawDeflection;
+            rawDeflection = direction || 0;
+            const previousPressed = rawPressed; rawPressed = pressed;
+            if (direction && direction !== previousDirection) {
+                if (direction === 'left') await back();
+                else if (direction === 'right') await nextPage();
+                else move(direction === 'up' ? -1 : 1);
+            }
+            if (pressed && !previousPressed) await select();
+        }
+        const safelyRaw = (v) => { Promise.resolve(raw(v)).catch((e) => { tell(e.message); ctx.log.warn(e); }); };
+        if (ctx.controller && ctx.controller.onInput) ctx.controller.onInput((v) => { relayAt = Date.now(); safelyRaw(v); });
+        let controllerWatch = null;
+        const openingController = ctx.signals.watch('de.bmw.infotainment.controlelements.FrontCCU', '1', {
+            statusRotaryEncoderState: (v) => { if (Date.now() - relayAt > 1000) safelyRaw(v); },
+        }, ctx.log);
+        Promise.resolve(openingController).then((watch) => {
+            controllerWatch = watch;
+            if (closed && watch && watch.shutdown) watch.shutdown();
+        }).catch((e) => ctx.log.warn('Controller: ' + e.message));
+        ui.onVisible((name, visible) => {
+            if (name === 'SETTINGS' && visible) refreshSettings();
+            syncController(); changed();
         });
-        bind('PREF_DETAIL', () => { const list = [500, 1000, 2000]; recorder.configure('sampleMs', list[(list.indexOf(recorder.settings.sampleMs) + 1) % list.length]); });
-        bind('PREF_AUTO', () => recorder.configure('automatic', !recorder.settings.automatic));
-        bind('PREF_ALTITUDE', () => { const list = [5, 10, 20]; recorder.configure('altitudeThresholdFt', list[(list.indexOf(recorder.settings.altitudeThresholdFt) + 1) % list.length]); });
-        bind('PREF_SMOOTH', () => recorder.configure('smoothing', !recorder.settings.smoothing));
-        bind('PREF_BANDS', () => {
-            const presets = [[15, 30, 45, 60, 80], [10, 20, 30, 40, 60], [20, 40, 60, 80, 100]];
-            const index = presets.findIndex((v) => v.join(',') === recorder.settings.speedBands.join(','));
-            recorder.configure('speedBands', presets[(index + 1) % presets.length]);
-        });
-        bind('PREF_MENU', () => show('MENU'));
-        ui.onVisible((name, on) => {
-            visible[name] = on;
-            render();
-        });
-        const close = () => { if (closed) return; closed = true; ++graphRequest; clearInterval(timer); recorder.close(); };
+        if (ui.onFocus) ui.onFocus(() => { syncController(); changed(); });
+        const close = () => {
+            if (closed) return;
+            closed = true; ++state.graphRequest;
+            if (ctx.controller) ctx.controller.grab(false);
+            if (loop) loop.stop();
+            recorder.close();
+            if (controllerWatch && controllerWatch.shutdown) Promise.resolve(controllerWatch.shutdown()).catch((e) => ctx.log.warn(e));
+        };
         if (ctx.app && ctx.app.on) ctx.app.on('shutdown', close);
         process.once('exit', close);
-        await parent('MAIN', 'MENU'); await parent('HISTORY', 'MENU'); await parent('PREFERENCES', 'MENU');
-        await parent('SUMMARY', 'HISTORY'); await parent('DELETE_TRIP', 'SUMMARY');
-        await parent('EDIT_METADATA', 'SUMMARY'); await parent('CHARACTERS', 'EDIT_METADATA'); await parent('ZOOM', 'GRAPHS');
-        visible.MAIN = ui.isVisible('MAIN');
-        timer = setInterval(render, 1000); if (timer.unref) timer.unref();
-        await render();
+        // Fixtures can inspect the same recorder/view state without changing the vehicle adapter.
+        ctx.tripRecorder = recorder; ctx.tripView = state;
+        loop = ctx.loop('MAIN', 8, async () => {
+            if (closed) return;
+            syncController();
+            const now = Date.now();
+            if (!dirty && now - lastDraw < 1000) return;
+            dirty = false; lastDraw = now;
+            const trip = selectedTrip();
+            if (trip && recorder.active && trip.id === recorder.active.id && state.projectionId === trip.id && state.projection) {
+                recorder.recent.forEach((row) => state.projection.add(row));
+            }
+            const actions = availableActions();
+            state.focus = Math.max(0, Math.min(state.focus, Math.max(0, actions.length - 1)));
+            const errors = storage.errors.concat(storage.historyErrors || []);
+            const notice = recorder.error || (state.noticeUntil > now ? state.notice : '') || (errors.length ? errors[0] : '') ||
+                (state.page === 'trip' && !state.saved && recorder.interrupted.length ? 'Interrupted trips are waiting in History.' : '');
+            const vm = Object.assign({}, state, {
+                actions, trip, currentTrip: recorder.active, saved: !!state.saved, focus: state.focus,
+                tablePage: state.tablePages[state.page] || 0, tableCoverage: !!state.tableCoverage[state.page], smoothing: recorder.settings.smoothing,
+                live: sources.sample(mono()), speedBands: recorder.settings.speedBands, notice, busy,
+                projection: trip && state.projectionId === trip.id ? state.projection : null,
+            });
+            await ui.image('MAIN_GFX', Dashboard.draw(ctx, vm));
+        });
+        refreshSettings(); changed();
     },
 });

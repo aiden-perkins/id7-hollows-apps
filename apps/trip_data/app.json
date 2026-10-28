@@ -1,8 +1,8 @@
 {
   "id": "trip_data",
   "title": "Trip Data",
-  "description": "Manual trip recordings, recovery, GPS elevation, coverage-aware summaries and saved-trip graphs",
-  "version": "1.0.0",
+  "description": "Custom graphical trip dashboard, history, elevation, fuel, gear statistics and recording recovery",
+  "version": "1.2.0",
   "vendor": "custom",
   "loggingId": "OA9F",
   "iconGlyph": "TRIP",
@@ -19,392 +19,54 @@
     },
     "de.bmw.infrastructure.VehicleInformation": {
       "DataPowerTrain2": "s"
+    },
+    "de.bmw.infotainment.controlelements.FrontCCU": {
+      "statusRotaryEncoderState": "rs"
     }
   },
   "screens": [
     {
       "name": "MAIN",
-      "title": "Current trip",
-      "items": [
-        [
-          "text3",
-          "CURRENT_STATE",
-          "No active trip"
-        ],
-        [
-          "scroll",
-          "CURRENT_TOTALS",
-          "No totals before Start"
-        ],
-        [
-          "text3",
-          "CURRENT_SOURCE",
-          ""
-        ],
-        [
-          "text3",
-          "CURRENT_AUTO",
-          ""
-        ],
-        [
-          "text3",
-          "CURRENT_NOTICE",
-          ""
-        ],
-        [
-          "button",
-          "CURRENT_START",
-          "Start trip"
-        ],
-        [
-          "button",
-          "CURRENT_FINISH",
-          "Finish / save retained recording"
-        ],
-        [
-          "button",
-          "CURRENT_GRAPHS",
-          "Graphs"
-        ],
-        [
-          "button",
-          "CURRENT_ELEVATION",
-          "Elevation"
-        ],
-        [
-          "button",
-          "CURRENT_FUEL",
-          "Fuel"
-        ],
-        [
-          "button",
-          "CURRENT_GEARS",
-          "Gears"
-        ],
-        [
-          "button",
-          "CURRENT_RETRY",
-          "Retry vehicle providers"
-        ],
-        [
-          "button",
-          "CURRENT_MENU",
-          "Page menu"
-        ]
-      ]
-    },
-    {
-      "name": "MENU",
+      "kind": "canvas",
       "title": "Trip Data",
-      "parent": false,
-      "items": [
+      "graphic": "MAIN_GFX",
+      "buttons": [
         [
-          "button",
-          "MENU_CURRENT",
-          "Current trip"
+          "BTN_PAGE",
+          "Next view"
         ],
         [
-          "button",
-          "MENU_HISTORY",
-          "Trip history / interruption recovery"
+          "BTN_PREV",
+          "Previous"
         ],
         [
-          "button",
-          "MENU_SETTINGS",
+          "BTN_SELECT",
+          "Select"
+        ],
+        [
+          "BTN_NEXT",
+          "Next"
+        ],
+        [
+          "BTN_BACK",
+          "Back"
+        ],
+        [
+          "BTN_SETTINGS",
           "Settings"
         ]
       ]
     },
     {
-      "name": "HISTORY",
-      "title": "Trip history",
-      "items": [
-        [
-          "text3",
-          "HISTORY_NOTICE",
-          ""
-        ],
-        [
-          "button",
-          "HISTORY_LIST",
-          "Loading saved trips"
-        ],
-        [
-          "button",
-          "HISTORY_REFRESH",
-          "Refresh history and storage usage"
-        ],
-        [
-          "button",
-          "HISTORY_MENU",
-          "Page menu"
-        ]
-      ]
-    },
-    {
-      "name": "SUMMARY",
-      "title": "Saved trip",
-      "items": [
-        [
-          "text3",
-          "SUMMARY_TITLE",
-          ""
-        ],
-        [
-          "text3",
-          "SUMMARY_STATE",
-          ""
-        ],
-        [
-          "scroll",
-          "SUMMARY_TOTALS",
-          ""
-        ],
-        [
-          "text3",
-          "SUMMARY_NOTES",
-          ""
-        ],
-        [
-          "scroll",
-          "SUMMARY_GAPS",
-          ""
-        ],
-        [
-          "text3",
-          "SUMMARY_NOTICE",
-          ""
-        ],
-        [
-          "button",
-          "SUMMARY_GRAPHS",
-          "Graphs"
-        ],
-        [
-          "button",
-          "SUMMARY_ELEVATION",
-          "Elevation"
-        ],
-        [
-          "button",
-          "SUMMARY_FUEL",
-          "Fuel"
-        ],
-        [
-          "button",
-          "SUMMARY_GEARS",
-          "Gears"
-        ],
-        [
-          "button",
-          "SUMMARY_RECOVER",
-          "Recover interrupted trip with a gap"
-        ],
-        [
-          "button",
-          "SUMMARY_CLOSE",
-          "Close interrupted trip at last saved sample"
-        ],
-        [
-          "button",
-          "SUMMARY_EDIT",
-          "Rename / annotate"
-        ],
-        [
-          "button",
-          "SUMMARY_DELETE",
-          "Delete saved trip"
-        ],
-        [
-          "button",
-          "SUMMARY_HISTORY",
-          "Back to history"
-        ]
-      ]
-    },
-    {
-      "name": "GRAPHS",
-      "title": "Trip graphs",
-      "items": [
-        [
-          "text3",
-          "GRAPHS_TRIP",
-          ""
-        ],
-        [
-          "text3",
-          "GRAPH_OPTIONS",
-          ""
-        ],
-        [
-          "graphic",
-          "GRAPH_IMAGE",
-          ""
-        ],
-        [
-          "text3",
-          "GRAPH_CURSOR_VALUE",
-          ""
-        ],
-        [
-          "text3",
-          "GRAPH_NOTICE",
-          ""
-        ],
-        [
-          "button",
-          "GRAPH_TYPE",
-          "Select graph: speed / altitude / MPG"
-        ],
-        [
-          "button",
-          "GRAPH_AXIS",
-          "Select axis: time / distance"
-        ],
-        [
-          "button",
-          "GRAPH_ZOOM",
-          "Zoom range"
-        ],
-        [
-          "button",
-          "GRAPH_CURSOR",
-          "Cursor positions"
-        ],
-        [
-          "button",
-          "GRAPH_PREV",
-          "Previous cursor point"
-        ],
-        [
-          "button",
-          "GRAPH_NEXT",
-          "Next cursor point"
-        ],
-        [
-          "button",
-          "GRAPHS_BACK",
-          "Back to trip summary"
-        ]
-      ]
-    },
-    {
-      "name": "ZOOM",
-      "title": "Graph zoom",
-      "items": [
-        [
-          "text3",
-          "ZOOM_VALUE",
-          "Rotate to select a range, press to return to the graph"
-        ],
-        [
-          "button",
-          "ZOOM_LIST",
-          "Zoom ranges"
-        ]
-      ]
-    },
-    {
-      "name": "ELEVATION",
-      "title": "Trip elevation",
-      "items": [
-        [
-          "text3",
-          "ELEVATION_TRIP",
-          ""
-        ],
-        [
-          "scroll",
-          "ELEVATION_TOTALS",
-          ""
-        ],
-        [
-          "graphic",
-          "ELEVATION_IMAGE",
-          ""
-        ],
-        [
-          "text3",
-          "ELEVATION_NOTICE",
-          ""
-        ],
-        [
-          "button",
-          "ELEVATION_GRAPH",
-          "Open altitude graph with cursor and zoom"
-        ],
-        [
-          "button",
-          "ELEVATION_BACK",
-          "Back to trip summary"
-        ]
-      ]
-    },
-    {
-      "name": "FUEL",
-      "title": "Trip fuel",
-      "items": [
-        [
-          "text3",
-          "FUEL_TRIP",
-          ""
-        ],
-        [
-          "scroll",
-          "FUEL_TOTALS",
-          ""
-        ],
-        [
-          "text3",
-          "FUEL_NOTICE",
-          ""
-        ],
-        [
-          "button",
-          "FUEL_GRAPH",
-          "Open rolling fuel-economy graph"
-        ],
-        [
-          "button",
-          "FUEL_BACK",
-          "Back to trip summary"
-        ]
-      ]
-    },
-    {
-      "name": "GEARS",
-      "title": "Trip gears",
-      "items": [
-        [
-          "text3",
-          "GEARS_TRIP",
-          ""
-        ],
-        [
-          "scroll",
-          "GEARS_TOTALS",
-          ""
-        ],
-        [
-          "text3",
-          "GEARS_NOTICE",
-          ""
-        ],
-        [
-          "button",
-          "GEARS_BACK",
-          "Back to trip summary"
-        ]
-      ]
-    },
-    {
-      "name": "PREFERENCES",
-      "title": "Trip settings",
+      "name": "SETTINGS",
+      "kind": "list",
+      "title": "Trip Data settings",
+      "parent": "MAIN",
       "items": [
         [
           "text3",
           "PREF_FIXED",
-          ""
+          "US units / 3 decimal measurement places / 12-hour dates. Moving means above 1 mph; stationary periods stay recorded."
         ],
         [
           "button",
@@ -419,17 +81,17 @@
         [
           "button",
           "PREF_ALTITUDE",
-          "Elevation deadband"
+          "Elevation noise deadband"
         ],
         [
           "button",
           "PREF_SMOOTH",
-          "Display smoothing"
+          "Display graph smoothing"
         ],
         [
-          "button",
+          "text3",
           "PREF_BANDS",
-          "Speed bands"
+          "Speed bands: 10 mph increments"
         ],
         [
           "text3",
@@ -443,101 +105,13 @@
         ],
         [
           "button",
-          "PREF_MENU",
-          "Page menu"
-        ]
-      ]
-    },
-    {
-      "name": "DELETE_TRIP",
-      "title": "Delete trip",
-      "items": [
-        [
-          "text3",
-          "DELETE_TITLE",
-          ""
-        ],
-        [
-          "text3",
-          "DELETE_HELP",
-          "Permanently delete this saved trip, its samples and annotations? Other trips are retained."
-        ],
-        [
-          "text3",
-          "DELETE_NOTICE",
-          ""
+          "PREF_RETRY",
+          "Retry vehicle providers"
         ],
         [
           "button",
-          "DELETE_CONFIRM",
-          "Confirm permanent deletion"
-        ],
-        [
-          "button",
-          "DELETE_CANCEL",
-          "Cancel"
-        ]
-      ]
-    },
-    {
-      "name": "EDIT_METADATA",
-      "title": "Rename / annotate trip",
-      "items": [
-        [
-          "text3",
-          "EDIT_PREVIEW",
-          ""
-        ],
-        [
-          "text3",
-          "EDIT_POSITION",
-          ""
-        ],
-        [
-          "text3",
-          "EDIT_NOTICE",
-          ""
-        ],
-        [
-          "button",
-          "EDIT_FIELD",
-          "Switch name / annotation"
-        ],
-        [
-          "button",
-          "EDIT_PREV",
-          "Previous character position"
-        ],
-        [
-          "button",
-          "EDIT_NEXT",
-          "Next character position"
-        ],
-        [
-          "button",
-          "EDIT_CHARACTER",
-          "Choose character / erase"
-        ],
-        [
-          "button",
-          "EDIT_SAVE",
-          "Save name and annotation"
-        ],
-        [
-          "button",
-          "EDIT_CANCEL",
-          "Cancel edits"
-        ]
-      ]
-    },
-    {
-      "name": "CHARACTERS",
-      "title": "Choose character",
-      "items": [
-        [
-          "button",
-          "CHARACTER_LIST",
-          "Characters"
+          "PREF_BACK",
+          "Back to dashboard"
         ]
       ]
     }

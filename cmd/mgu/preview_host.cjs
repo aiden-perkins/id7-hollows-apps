@@ -94,6 +94,10 @@ async function initialize(config) {
     const pause = (ms) => clock ? clock.advance(ms) : new Promise((resolve) => setTimeout(resolve, ms));
     const kitDir = path.join(config.stage, 'source', 'javascript', 'kit');
     const spec = JSON.parse(fs.readFileSync(path.join(kitDir, 'app-spec.json'), 'utf8'));
+    if (!spec.screens || !spec.screens.length) throw new Error('App has no screens to preview');
+    if (config.gpu && !spec.screens.some((screen) => screen.kind === 'canvas')) {
+        throw new Error('Native-menu previews use software rendering; omit --gpu and --record');
+    }
     const source = fs.readFileSync(path.join(kitDir, 'mgu.js'), 'utf8').replace(/\r\n/g, '\n');
     const match = source.match(/class Settings[\s\S]*?\n}\n/);
     if (!match) throw new Error('Built runtime does not contain the expected Settings class');
@@ -109,19 +113,31 @@ async function initialize(config) {
     if (config.gpu && config.settings.renderer === 'software') {
         throw new Error('GPU capture conflicts with the renderer=software setting');
     }
+    const { NativePreview } = require('./preview_native.cjs');
+    const native = new NativePreview(spec, kitDir);
     const handlers = {}, components = {};
     const component = (name) => {
         if (!components[name]) {
             const c = new EventEmitter();
-            c.setProperty = c.setValue = c.setRowCount = async () => {};
+            c.getId = () => native.id(name);
+            c.setProperty = async (key, value) => native.property(name, key, value);
+            c.setValue = async (...args) => native.setValue(name, args);
+            c.setRowCount = async (count) => native.count(name, count);
+            c.setRowSelected = async (row, checked) => native.checked(name, checked, row);
+            c.updateResources = async () => {};
+            c.on('focus', (event) => {
+                const item = native.items.get(name);
+                if (item && item.screen && event && event.value !== false) {
+                    const row = Number.isInteger(event.row) ? event.row : 0;
+                    if (row >= 0 && row < item.rows.length) native.focus(name, row);
+                }
+            });
             components[name] = c;
         }
         return components[name];
     };
-    const screen = (spec.screens || []).find((item) => item.kind === 'canvas');
-    if (!screen) throw new Error('App has no canvas screen to preview');
-    let display = null, lastPNG = '', imageIndex = 0, frame = 0;
-    let shown = (spec.screens[0] && spec.screens[0].name) || screen.name;
+    let display = null, lastPNG = '', imageIndex = 0, frame = 0, nativePNG = null;
+    let shown = spec.screens[0].name;
     const loops = {}, visibleHandlers = [], focusHandlers = [];
     const notify = (name, visible) => {
         component(name).emit('visible', { visible });
@@ -129,32 +145,46 @@ async function initialize(config) {
         focusHandlers.forEach((fn) => fn(name, visible));
     };
     const open = async (name) => {
-        if (!(spec.screens || []).some((item) => item.name === name) && !(spec.stateIds && spec.stateIds[name])) throw new Error('Unknown screen ' + name);
+        if (!native.screen(name)) throw new Error('Unknown screen ' + name);
         if (name === shown) return;
         const previous = shown;
         shown = name;
         notify(previous, false); notify(shown, true);
         console.log('open', name);
     };
+    const closeScreen = async (name) => {
+        if (name !== shown) return;
+        const parent = native.parent(name);
+        if (parent) await open(parent);
+    };
     fs.mkdirSync(path.join(config.dir, 'captures'), { recursive: true });
+    const saveFrame = (drawing) => {
+        const data = Buffer.isBuffer(drawing) ? drawing : drawing.png();
+        const file = path.join(config.dir, 'captures', String(imageIndex++) + '.png');
+        fs.writeFileSync(file, data);
+        return file;
+    };
     const ui = {
-        image: (name, canvas) => display.present(name, canvas, softImage),
-        _image: async (name, canvas) => {
-            const data = Buffer.isBuffer(canvas) ? canvas : canvas.png();
-            const file = path.join(config.dir, 'captures', String(imageIndex++) + '.png');
-            fs.writeFileSync(file, data);
-            lastPNG = file;
+        image: async (name, drawing) => {
+            if (native.inline(name)) return native.image(name, drawing);
+            return display.present(name, drawing, softImage);
         },
-        text: async (name, value) => { if (display) display.label(name, value); },
-        cells: async (name, rows) => console.log('cells', name, JSON.stringify(rows)),
-        rows: async (name, rows) => console.log('rows', name, rows),
-        visible: async () => {}, enabled: async () => {}, checked: async () => {},
+        _image: async (name, drawing) => {
+            if (native.inline(name)) return native.image(name, drawing);
+            lastPNG = saveFrame(drawing);
+        },
+        text: async (name, value, row = 0, cell = 'Text') => {
+            native.text(name, value, row, cell);
+            if (display && row === 0 && cell === 'Text') display.label(name, value);
+        },
+        cells: async (name, row, values) => native.cells(name, row, values),
+        rows: async (name, count) => native.count(name, count),
+        visible: async (name, visible) => native.property(name, 'Visible', visible),
+        enabled: async (name, enabled) => native.property(name, 'Enabled', enabled),
+        checked: async (name, checked, row = 0) => native.checked(name, checked, row),
+        selected: async (name, row) => native.selected(name, row),
         onClick: (name, fn) => { handlers[name] = fn; },
-        open, close: async (name) => {
-            if (name !== shown) return;
-            const current = spec.screens.find((item) => item.name === name);
-            return open(current && typeof current.parent === 'string' ? current.parent : spec.screens[0].name);
-        },
+        open, close: closeScreen,
         isVisible: (name) => name === shown, onVisible: (fn) => visibleHandlers.push(fn),
         hasFocus: (name) => name === shown, onFocus: (fn) => focusHandlers.push(fn),
         comp: component, rhmi: { getByName: component },
@@ -168,13 +198,43 @@ async function initialize(config) {
     display._send = (name, drawing, image) => send(name, drawing, image, true);
     const gpuFrame = display.gpu ? display.gpu.frame.bind(display.gpu) : null;
     if (gpuFrame) display.gpu.frame = () => true;
+    const app = new EventEmitter();
+    const unavailable = async () => { throw new Error('Preview has no live vehicle connection'); };
     const ctx = {
-        ui, settings, spec, dataDir: config.dir, log, display, preview: true, theme,
+        ui, settings, spec, dataDir: config.dir, log, display, preview: true, theme, app,
         canvas: (width, height) => display.canvas(width, height),
-        signals: { watch: async (iface) => ({ iface, error: 'preview' }), proxy: async () => { throw new Error('preview'); } },
+        signals: {
+            hasNative: () => false,
+            watch: async (iface) => ({ iface, available: false, error: 'preview', shutdown: async () => {} }),
+            proxy: unavailable, onAvailable: unavailable, on: unavailable, get: unavailable, set: unavailable, call: unavailable,
+        },
         controller: { grab(on) { display.grab(on); }, onInput(fn) { display.onCcu = fn; } },
         loop: (name, fps, fn) => { loops[name] = fn; return { stop() {}, kick() {} }; },
     };
+    const settingValues = (s) => s.type === 'choice' ? (s.options || []).map((o) => o[0]) : s.type === 'number' ? s.steps || [] : null;
+    const refreshSettings = () => {
+        for (const s of spec.settings || []) {
+            const name = 'SET_' + s.key.toUpperCase(), values = settingValues(s);
+            if (s.type === 'bool') { native.text(name, s.label); native.checked(name, !!settings.get(s.key)); }
+            else if (values) {
+                native.count(name, values.length);
+                values.forEach((value, row) => {
+                    const label = s.type === 'choice' ? s.options[row][1] : numberLabel ? numberLabel(s, value, (key) => settings.get(key)) :
+                        String(value) + (s.unit ? ' ' + s.unit : '') + (s.markDefault && value === s.default ? ' (default)' : '');
+                    native.text(name, label, row, 'ItemText');
+                });
+                native.selected(name, Math.max(0, values.indexOf(settings.get(s.key))));
+            } else native.cells(name, 0, { Text1stRow: s.label, Text2ndRow: settings.display(s.key) });
+        }
+    };
+    for (const s of spec.settings || []) {
+        ui.onClick('SET_' + s.key.toUpperCase(), (event) => {
+            const values = settingValues(s);
+            if (values) { if (values[event.row] !== undefined) settings.set(s.key, values[event.row]); }
+            else settings.cycle(s.key);
+        });
+    }
+    settings.onChange(refreshSettings); refreshSettings();
     const fixture = config.fixture ? require(config.fixture) : null;
     if (fixture && fixture.setup) fixture.setup(ctx);
     let appStarted;
@@ -191,29 +251,58 @@ async function initialize(config) {
     if (fixture && fixture.afterStart) await invoke(() => fixture.afterStart(ctx, components));
     notify(shown, true);
     await pause(1500);
+    const target = (value) => {
+        const match = /^(.*):(\d+)$/.exec(value);
+        const name = match ? match[1] : value, row = match ? Number(match[2]) : 0;
+        if (!Number.isSafeInteger(row)) throw new Error('Invalid preview row: ' + value);
+        return { name, row };
+    };
     state = {
         now: () => clock ? clock.now : Date.now(),
         pause,
-        click: async (name) => {
+        focus: async (value) => {
+            const { name, row } = target(value), item = native.items.get(name);
+            if (!item || item.screen !== shown) throw new Error('Component is not on the visible screen: ' + name);
+            native.focus(name, row);
+            await invoke(() => component(name).emit('focus', { row, value: true }));
+            await pause(300);
+        },
+        click: async (value) => {
+            if (value === '@back') { await invoke(() => closeScreen(shown)); await pause(300); return; }
+            const { name, row } = target(value);
             if (!handlers[name]) {
                 throw new Error('Unknown button ' + name + '. Available: ' + Object.keys(handlers).sort().join(', '));
             }
-            component(name).emit('action', { row: 0 });
-            await invoke(() => handlers[name]({ row: 0 }));
+            if (native.items.has(name)) native.press(name, row);
+            component(name).emit('focus', { row, value: true });
+            component(name).emit('action', { row });
+            await invoke(() => handlers[name]({ row }));
             await pause(300);
         },
         draw: async () => {
-            const loopFn = loops[shown];
-            if (!loopFn) throw new Error('Screen ' + shown + ' has no render loop; use --click to open a canvas screen');
-            await invoke(loopFn);
-            if (gpuFrame) {
-                if (!display.last) throw new Error('App did not draw a frame');
-                gpuFrame(display.last.frame);
-            } else if (!lastPNG) throw new Error('App did not produce a PNG frame');
+            const current = native.screen(shown), loopFn = loops[shown];
+            if (current.kind === 'canvas') {
+                if (!loopFn) throw new Error('Canvas screen ' + shown + ' has no render loop');
+                await invoke(loopFn);
+                if (gpuFrame) {
+                    if (!display.last) throw new Error('App did not draw a frame');
+                    gpuFrame(display.last.frame);
+                } else if (!lastPNG) throw new Error('App did not produce a PNG frame');
+            } else {
+                if (config.gpu) throw new Error('Native-menu previews use software rendering; omit --gpu and --record');
+                if (loopFn) await invoke(loopFn);
+                const key = shown + ':' + native.revision;
+                if (!nativePNG || nativePNG.key !== key) nativePNG = { key, png: saveFrame(native.render(shown)) };
+                lastPNG = nativePNG.png;
+            }
             frame++;
         },
         reply: () => ({ png: lastPNG, frame, now: clock ? clock.now : Date.now() }),
-        close: () => { const previous = shown; shown = null; notify(previous, false); if (display.gpu) display.gpu.close(); },
+        close: () => {
+            const previous = shown; shown = null; notify(previous, false);
+            app.emit('shutdown');
+            if (display.gpu) display.gpu.close();
+        },
     };
     return state.reply();
 }
@@ -226,6 +315,7 @@ async function handle(request) {
         if (!Number.isFinite(request.ms) || request.ms < 0) throw new Error('Invalid wait duration');
         await state.pause(request.ms); break;
     case 'click': await state.click(request.name); break;
+    case 'focus': await state.focus(request.name); break;
     case 'frame': await state.draw(); break;
     case 'close': state.close(); break;
     default: throw new Error('Unknown preview host operation');

@@ -125,6 +125,28 @@ rejects changed known host keys; existing car-command SSH policy is unchanged.
 | `dtc import`, `dtc db`, `dtc codes`, `dtc csv`, `dtc tables` | Import fault data. |
 | `pack`, `icon`, `icons`, `fonts bake`, `doom build` | Asset and optional build tools. |
 
+Native iDrive menus can be previewed as well as canvas screens. Menu previews use
+a host-rendered approximation of the layout, with text, controls, selected rows
+and inline canvas graphs; they are not screenshots of BMW's renderer. Native
+menus support software PNG/GIF capture; GPU capture and recordings require a
+canvas screen. Without an explicit fixture there is no live vehicle feed.
+
+```sh
+mgu preview ambient_lighting --out out/preview.png
+mgu preview ambient_lighting --out out/presets.png --click HOME_PRESETS --focus PRESET_LIST:1
+mgu preview ambient_lighting --out out/preset.png --click HOME_PRESETS --click PRESET_LIST:1
+```
+
+`COMPONENT:ROW` selects a zero-based row; a plain component name uses row zero.
+`--focus` scrolls to a component/row without pressing it and runs after all
+`--click` actions. `--click @back` follows the screen's current Back target.
+Preview preferences and app data are isolated in the temporary preview directory.
+
+The preview host and menu renderer are embedded in the CLI executable. Rebuild
+the CLI after changing preview source; existing staged app files in `dist/`
+can be reused when only the preview host changes.
+
+
 `mgu help` lists the commands. Renderer matching is the default; use
 `kit --renderer stale` to permit an older binary or `kit --renderer none` to omit
 it. SVG icons need Chrome/Chromium, font baking needs Pillow, and Doom rebuilds

@@ -27,14 +27,15 @@ class Storage {
     }
     settings() {
         const defaults = { schemaVersion: 1, units: 'US', precision: 3, dateFormat: 'US12', sampleMs: 1000,
-            automatic: false, altitudeThresholdFt: 10, smoothing: false, speedBands: [15, 30, 45, 60, 80] };
+            automatic: false, altitudeThresholdFt: 10, smoothing: false, speedBands: Array.from({ length: 20 }, (_, i) => 10 + i * 10) };
         try {
             const s = JSON.parse(fs.readFileSync(path.join(this.dir, 'settings.json'), 'utf8'));
             if (!s || s.schemaVersion !== 1 || s.units !== 'US' || s.precision !== 3 || s.dateFormat !== 'US12' ||
                 ![500, 1000, 2000].includes(s.sampleMs) || typeof s.automatic !== 'boolean' || typeof s.smoothing !== 'boolean' ||
-                ![5, 10, 20].includes(s.altitudeThresholdFt) || !Array.isArray(s.speedBands) || s.speedBands.length !== 5 ||
-                !s.speedBands.every((v, i) => Number.isFinite(v) && v > 1 && v <= 150 && (!i || v > s.speedBands[i - 1]))) throw new Error('Unsupported or invalid settings');
-            return s;
+                ![5, 10, 20].includes(s.altitudeThresholdFt) || !Array.isArray(s.speedBands) || (s.speedBands.length < 1 || s.speedBands.length > 64) ||
+                !s.speedBands.every((v, i) => Number.isFinite(v) && v > 1 && v <= 250 && (!i || v > s.speedBands[i - 1]))) throw new Error('Unsupported or invalid settings');
+            // Apply the requested bands to future recordings; saved trip policies remain immutable.
+            return Object.assign({}, s, { speedBands: defaults.speedBands.slice() });
         } catch (e) {
             if (e.code !== 'ENOENT') { this.settingsBlocked = true; this.errors.push('Settings preserved: ' + e.message); }
             return defaults;
