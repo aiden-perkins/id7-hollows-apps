@@ -1,7 +1,112 @@
 # Trip Data
 
-> Planning outline only. No app implementation or manifest exists yet.
-> The choices below define intended behavior; source availability still needs research.
+> App source and native screens are implemented; source-dependent limits are documented below.
+> The original choices remain the requirements; automatic ignition and several measurements need further evidence.
+
+## Implemented app and evidence limits
+
+Trip Data now has native iDrive screens, manual recording, durable sample batches,
+interruption recovery, saved-trip history, graph controls, metadata editing and
+confirmed deletion. The design below remains the requirements/research inventory.
+
+### Recording and storage
+
+- Current trip opens first. Manual Start/Finish are supported; no Pause/Resume is
+  offered. Recording continues across the app's pages independently of visible
+  UI, including stationary periods, while the app process remains alive.
+- Choose 500/1000/2000 ms recording detail before starting. Each trip retains its
+  policy, speed bands and elevation deadband; detail is never silently reduced.
+  There is no maximum duration or automatic retention deletion.
+- Both coordinates and altitude are recorded with independent validity checks.
+  Samples retain source payloads, receive timestamps, monotonic ages, quality,
+  connection generations and source GNSS timestamps where supplied.
+- Freshness uses local delivery age; source GNSS timestamps are retained without assuming synchronized clocks.
+- Sources use subscriptions and bounded getters. A missing optional provider
+  does not prevent time/GPS recording. Stale/invalid readings produce gaps.
+- Samples are committed in immutable JSONL chunks, at most 64 rows / 1 MiB each,
+  flushed every five seconds or at 64 rows. Summary checkpoints follow committed
+  chunks; JSON writes use temporary files and rename, with file flushes.
+- Files live under `data/trips/<trip-id>/summary.json` and
+  `samples-<sequence>.jsonl`; `data/trips/index.json` is advisory. History
+  scans summaries so an index update failure does not hide valid saved trips.
+- Startup identifies unfinished recordings without silently resuming. Recovery
+  rebuilds calculations from committed chunks, including chunks newer than the
+  summary checkpoint, and adds an explicit missing wall interval. Recovery
+  downtime is excluded from recorded duration and never filled with movement,
+  gear, RPM, fuel or GPS data. Close interrupted trip saves only observed data.
+- App shutdown checkpoints an interrupted trip. Storage failures halt collection,
+  show the error and preserve committed chunks. Unflushed rows remain in memory
+  while the process survives; Finish can retry saving them. A crash can lose the
+  uncommitted batch. Temporary/orphan files are preserved, not auto-cleaned.
+- Retain all trips where storage permits. Settings shows stored trip bytes;
+  this runtime cannot reliably report free filesystem space. Write failures are
+  explicit rather than triggering automatic deletion or reduced detail.
+- Saved trips support a controller character editor for name (48 characters)
+  and annotation (160 characters). Deletion requires explicit confirmation and
+  refuses unexpected files/symlinks. Malformed or unsupported stored schemas are
+  reported and preserved.
+
+### Calculations and presentation
+
+- Recorded duration uses monotonic time and includes stationary periods and
+  in-process delivery gaps. Recovery downtime is tracked separately.
+- Distance requires validated speed; GPS coordinates are not silently converted
+  to distance. The calculation engine uses bounded aligned intervals, trapezoidal
+  speed integration and a strict moving threshold above 1 mph. Threshold
+  crossings are integrated proportionally. Missing speed stays unknown.
+- Gear time holds the previous recognized selector state over a bounded interval.
+  Count direct changes between forward gears only; P/R/N, unresolved NP and gaps
+  do not count as forward shifts. Unknown time has its own bucket.
+- RPM statistics use valid aligned samples; total revolutions integrate RPM over
+  seconds / 60. Fuel calculations require validated cumulative gallons and use
+  matched distance/fuel totals, never averaged MPG samples or tank-level changes.
+- Speed-band buckets use each interval's trapezoidal mean speed, with a separate
+  unknown bucket. Speed bands can be selected from three boundary presets.
+- Elevation requires valid 3D height. Display feet, first/last/net altitude, extrema,
+  coverage, deadband-based estimated ascent/descent, and an explicitly labeled
+  adjacent-sample vertical-speed estimate. Deadband anchors reset at gaps.
+  GPS noise/reference/accuracy remain limitations.
+- Graphs select speed, altitude or 60-second rolling MPG; time or observed-distance
+  axis; full trip or last 60/300/900/3600 seconds. Controller cursor and zoom lists
+  respond to focus or press, with explicit cursor step controls as a fallback.
+  Cursor labels show recorded time, aligned distance and value.
+- Saved graphs stream committed chunks into a bounded projection. Current graphs
+  append new rows. The projection is limited to 2,048 points and conservatively
+  retains gap flags while thinning; it can omit visual detail/extrema. Full
+  samples and calculated totals are separate and are not downsampled.
+  Optional display smoothing never changes recorded values or totals.
+- Trip identity, coverage and unavailable explanations remain visible in every
+  view. Saved summaries never include current vehicle readings. Units are US,
+  measurements use three decimal places, and dates use the specified local
+  12-hour format. Stored precision and timestamps remain independent.
+
+### Still blocked by source evidence
+
+Automatic ignition-on/off recording is **not operational**. Its preference records
+the user's intent and explicitly displays unavailable. The inspected catalog's
+infotainment power modes and energy-shortage state do not establish ignition
+boundaries. Engine stop/start is not used as ignition. Validated ignition signals
+and reliable hidden/sleep lifecycle behavior are still required.
+
+Moving-speed and RPM conversions remain unconfirmed on this M850i. Their raw
+candidates are retained with unavailable physical values, so distance, moving
+time, speed graphs and RPM totals stay unavailable until the conversion is
+validated. No calibrated consumption source is established, so fuel/MPG metrics
+and graphs remain unavailable. Recognized gear enums are categorical;
+availability on this car still depends on actual delivery. These limits do not
+prevent recording elapsed time, GPS coordinates/height and source quality.
+
+Wrapper app listing, packaging, kit assembly and ordinary app downloads now
+recognize `trip_data` as a local app using the existing runtime getter patches.
+No upstream source was vendored.
+
+Files: `app.json`, `main.js`, `sources.js`, `recorder.js`, `storage.js`,
+`calculations.js`, `view.js`, and this README. Preferences use schema version 1
+in `data/settings.json`; trip/sample/calculation schemas are version 1.
+
+Source review only. Tests, linters, formatters, builds, compilation and execution
+validation were not run. No bundle was built or installed.
+
 
 ## Goal
 
@@ -10,8 +115,8 @@ speed, MPG and elevation graphs. Tailor units and presentation to the M850i.
 
 ## Pages, screens and navigation
 
-This is a proposed layout, not an implemented app. The future app ID is `trip_data`
-and the proposed display name is **Trip Data**.
+The implemented native layout uses app ID `trip_data`
+and display name **Trip Data**.
 
 ### How to move around
 
@@ -202,11 +307,11 @@ making all trip statistics unavailable.
 | Calculations | Distance, speed, fuel, altitude, gear and RPM statistics with coverage |
 | Storage and history | Trip index, summaries, sample chunks, annotations and retention |
 | Preferences | Units, thresholds, recording policy and presentation options |
-| Wrapper integration | Future app routing and packaging through the existing wrapper |
+| Wrapper integration | Implemented local app routing and packaging through the existing wrapper |
 
 These are proposed responsibilities, not a fixed file structure. Use the upstream
 runtime and SDK through the wrapper; share suitable local research deliberately.
-No manifest or installable app exists in this planning folder yet.
+App source and a manifest now exist; packaging has not been run.
 
 ### Metrics and calculation rules
 
