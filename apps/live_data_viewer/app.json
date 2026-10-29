@@ -1,22 +1,22 @@
 {
   "id": "live_data_viewer",
   "title": "Live Data Viewer",
-  "description": "Read-only categorized vehicle readings with source quality, recent trends and manual snapshots",
-  "version": "1.0.0",
+  "description": "Performance meters with visual extrema, compact driving instruments, rolling temperatures and eight-cylinder engine-health comparison",
+  "version": "1.3.2",
   "vendor": "custom",
   "loggingId": "OA9E",
   "iconGlyph": "LIVE",
   "signals": {
     "de.bmw.infotainment.vehicle.CDS": {
       "statusEngineTemperature": "rs",
-      "statusEngineSpeed2": "rs",
-      "statusBattery2": "rs"
+      "statusEngineSpeed2": "rs"
     },
     "de.bmw.infotainment.vehicle.Vehicle2": {
       "statusCarSpeed2": "rs"
     },
     "de.bmw.infotainment.drivingexcitement.FES": {
       "statusFESVehicleDynamicSwitchHMI": "rs",
+      "statusDSCSwitchHMI": "rs",
       "statusSwitchDriveDynamicSport2": "rs",
       "statusActualValueTorque2": "rs"
     },
@@ -37,15 +37,9 @@
     "de.bmw.infrastructure.VehicleInformation": {
       "DataPowerTrain2": "s"
     },
-    "de.bmw.powertrain.AcceleratorPedal": {
-      "AngleAcceleratorPedal": "s"
-    },
     "de.bmw.infotainment.drivingexcitement.XView": {
       "statusSteeringAngleDriver": "rs",
       "statusFrontAxleSteeringAngle": "rs"
-    },
-    "de.bmw.chassis.VehicleStabilizationManagement": {
-      "StabilizationManagement": "s"
     },
     "de.bmw.infotainment.vehicle.TPMS": {
       "statusTyrePressure": "rs",
@@ -55,212 +49,27 @@
     "de.bmw.infotainment.vehicle.TPMSInternalData": {
       "tpmsInternalLastValues": "rs"
     },
-    "de.bmw.infotainment.KombiIF": {
-      "statusRangeTankStatus": "rs"
+    "de.bmw.infotainment.controlelements.FrontCCU": {
+      "statusRotaryEncoderState": "rs"
+    },
+    "com.harman.infotainment.systemfunctions.tasu.tasu.InternalTasu": {
+      "_instances": "SystemFunctionsInternalTasuInst1",
+      "_methods": ["sendTasuRequest"],
+      "_broadcasts": ["sendTasuResponse"]
     }
   },
   "screens": [
     {
       "name": "MAIN",
+      "kind": "canvas",
       "title": "Live Data Viewer",
-      "items": [
-        [
-          "text3",
-          "HOME_SESSION",
-          ""
-        ],
-        [
-          "text3",
-          "HOME_NOTICE",
-          "Choose a category"
-        ],
-        [
-          "button",
-          "HOME_PAGES",
-          "Categories"
-        ],
-        [
-          "button",
-          "HOME_SETTINGS",
-          "Settings"
-        ],
-        [
-          "button",
-          "HOME_RESET",
-          "Start new observation session"
-        ]
-      ]
-    },
-    {
-      "name": "TEMPERATURES",
-      "title": "Temperatures",
-      "parent": "MAIN",
-      "items": [
-        [
-          "text3",
-          "TEMPERATURES_SESSION",
-          ""
-        ],
-        [
-          "text3",
-          "TEMPERATURES_NOTICE",
-          ""
-        ],
-        [
-          "tworow",
-          "TEMPERATURES_READINGS",
-          "Readings"
-        ],
-        [
-          "button",
-          "TEMPERATURES_RETRY",
-          "Reconnect category sources"
-        ],
-        [
-          "button",
-          "TEMPERATURES_HOME",
-          "Page menu"
-        ]
-      ]
-    },
-    {
-      "name": "DRIVING",
-      "title": "Driving and drivetrain",
-      "parent": "MAIN",
-      "items": [
-        [
-          "text3",
-          "DRIVING_SESSION",
-          ""
-        ],
-        [
-          "text3",
-          "DRIVING_NOTICE",
-          ""
-        ],
-        [
-          "tworow",
-          "DRIVING_READINGS",
-          "Readings"
-        ],
-        [
-          "graphic",
-          "DRIVING_GRAPH",
-          ""
-        ],
-        [
-          "button",
-          "DRIVING_RETRY",
-          "Reconnect category sources"
-        ],
-        [
-          "button",
-          "DRIVING_HOME",
-          "Page menu"
-        ]
-      ]
-    },
-    {
-      "name": "HEALTH",
-      "title": "Engine health",
-      "parent": "MAIN",
-      "items": [
-        [
-          "text3",
-          "HEALTH_SESSION",
-          ""
-        ],
-        [
-          "text3",
-          "HEALTH_NOTICE",
-          ""
-        ],
-        [
-          "tworow",
-          "HEALTH_READINGS",
-          "Readings"
-        ],
-        [
-          "button",
-          "HEALTH_RETRY",
-          "Reconnect category sources"
-        ],
-        [
-          "button",
-          "HEALTH_HOME",
-          "Page menu"
-        ]
-      ]
-    },
-    {
-      "name": "DETAILS",
-      "title": "Signal details",
-      "parent": "MAIN",
-      "items": [
-        [
-          "text3",
-          "DETAIL_TITLE",
-          ""
-        ],
-        [
-          "text3",
-          "DETAIL_VALUE",
-          ""
-        ],
-        [
-          "text3",
-          "DETAIL_SOURCE",
-          ""
-        ],
-        [
-          "text3",
-          "DETAIL_NOTES",
-          ""
-        ],
-        [
-          "text3",
-          "DETAIL_AGE",
-          ""
-        ],
-        [
-          "text3",
-          "DETAIL_QUALITY",
-          ""
-        ],
-        [
-          "text3",
-          "DETAIL_EXTREMA",
-          ""
-        ],
-        [
-          "graphic",
-          "DETAIL_GRAPH",
-          ""
-        ],
-        [
-          "text3",
-          "DETAIL_NOTICE",
-          ""
-        ],
-        [
-          "button",
-          "DETAIL_SAVE",
-          "Save selected reading as data snapshot"
-        ],
-        [
-          "button",
-          "DETAIL_RETRY",
-          "Reconnect category sources"
-        ],
-        [
-          "button",
-          "DETAIL_BACK",
-          "Back to category"
-        ]
-      ]
+      "graphic": "MAIN_GFX",
+      "bar": false,
+      "buttons": []
     },
     {
       "name": "PREFERENCES",
+      "kind": "list",
       "title": "Settings",
       "parent": "MAIN",
       "items": [
@@ -297,29 +106,7 @@
         [
           "button",
           "PREF_HOME",
-          "Page menu"
-        ]
-      ]
-    },
-    {
-      "name": "RESET_SESSION",
-      "title": "Start observation session",
-      "parent": "MAIN",
-      "items": [
-        [
-          "text3",
-          "RESET_HELP",
-          "Reset all extrema and recent graphs together? Ignition is not reliably identified. This starts a new observation session without claiming an ignition boundary. Saved snapshots are retained."
-        ],
-        [
-          "button",
-          "RESET_CONFIRM",
-          "Reset all extrema and graphs"
-        ],
-        [
-          "button",
-          "RESET_CANCEL",
-          "Cancel"
+          "Back to dashboard"
         ]
       ]
     }

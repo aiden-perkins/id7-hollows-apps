@@ -1,5 +1,6 @@
 'use strict';
 const D = require('./definitions');
+const { DiagnosticServices } = require('./diagnostic');
 function deadline(promise, ms, label) {
     let timer;
     return Promise.race([Promise.resolve(promise), new Promise((resolve, reject) => {
@@ -10,6 +11,7 @@ class Services {
     constructor(ctx, model) {
         this.ctx = ctx; this.model = model; this.signals = ctx.signals;
         this.connections = {}; this.closed = false; this.ids = [];
+        this.diagnostic = new DiagnosticServices(ctx, model);
         this.timer = setInterval(() => {
             Object.keys(this.connections).forEach((key) => {
                 const c = this.connections[key];
@@ -27,7 +29,9 @@ class Services {
         if (this.closed) return;
         this.ids = ids.slice(); this.model.activate(ids);
         const wanted = {};
-        D.definitions.filter((d) => ids.includes(d.id) && d.source).forEach((d) => {
+        const active = D.definitions.filter((d) => ids.includes(d.id));
+        this.diagnostic.activate(active.filter((d) => d.diag));
+        active.filter((d) => d.source && !d.diag).forEach((d) => {
             const key = D.sourceKey(d);
             if (!wanted[key]) wanted[key] = { key, iface: D.IF[d.source], instance: d.instance || '1', fields: {} };
             wanted[key].fields[d.field] = { read: !!d.read, staleMs: d.staleMs };
@@ -122,6 +126,7 @@ class Services {
     }
     close() {
         this.closed = true; clearInterval(this.timer);
+        this.diagnostic.close();
         Object.keys(this.connections).forEach((key) => this.dispose(this.connections[key]));
         this.connections = {};
     }

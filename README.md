@@ -156,7 +156,7 @@ need Zig and Binaryen. GPU replay needs a compatible renderer for your host.
 
 - [MGU Lab](apps/mgu_lab/) — the current local test app.
 - [Trip Data](apps/trip_data/) - manual trip recordings, recovery, coverage-aware summaries and GPS graphs.
-- [Live Data Viewer](apps/live_data_viewer/) - categorized read-only readings, quality, trends and manual snapshots.
+- [Live Data Viewer](apps/live_data_viewer/) - categorized read-only readings, quality and trends, with compact Previous/Next/Settings navigation.
 - [Ambient Lighting](apps/ambient_lighting/) — saved color-menu presets and driving-mode mappings.
 
 App-specific features, settings and examples belong in each app's own README

@@ -5,7 +5,7 @@ class Storage {
     constructor(dir) { this.dir = dir; this.error = ''; this.blocked = false; this.serial = 0; }
     loadSettings() {
         const defaults = { schemaVersion: 1, units: 'US', precision: 3, dateFormat: 'US12',
-            order: ['temperatures', 'driving', 'health'], trendSeconds: 180, refreshMs: 1000 };
+            order: ['driving', 'temperatures', 'health'], trendSeconds: 180, refreshMs: 1000 };
         try {
             const s = JSON.parse(fs.readFileSync(path.join(this.dir, 'settings.json'), 'utf8'));
             if (!s || s.schemaVersion !== 1 || s.units !== 'US' || s.precision !== 3 || s.dateFormat !== 'US12' ||

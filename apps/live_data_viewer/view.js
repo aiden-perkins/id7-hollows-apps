@@ -1,48 +1,40 @@
 'use strict';
-const { Canvas } = require('./kit/canvas');
+const G = require('./kit/gauges');
+const { HMI, FULL } = require('./kit/display');
+const { text } = require('./instruments');
+const driving = require('./driving');
+const temperatures = require('./temperatures');
+const health = require('./health');
 
-function value(v, unit) {
-    if (v === null || v === undefined) return '--';
-    return (typeof v === 'number' ? v.toFixed(3) : String(v)) + (unit ? ' ' + unit : '');
-}
-function date(at) {
-    if (!at) return 'Never';
-    const d = new Date(at), h = d.getHours(), pad = (v) => String(v).padStart(2, '0');
-    return (h % 12 || 12) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds()) +
-        (h >= 12 ? ' PM ' : ' AM ') + (d.getMonth() + 1) + '-' + d.getDate() + '-' + d.getFullYear();
-}
-function summary(model, d) {
-    const r = model.readings[d.id], s = model.state(d);
-    let label = s.state.toUpperCase() + ' | ' + (s.value !== undefined && s.value !== null ? value(s.value, d.unit) + (s.retained ? ' (last valid)' : '') : '--');
-    if (d.numeric && r.min !== null) label += ' | Min ' + value(r.min, d.unit) + ' / Max ' + value(r.max, d.unit);
-    if (!s.value && s.value !== 0 && s.note) label += ' | ' + s.note;
-    return label;
-}
-function graph(model, d) {
-    const cv = new Canvas(900, 260).clear('#10151d');
-    const now = Date.now(), seconds = model.settings.trendSeconds, start = now - seconds * 1000;
-    const r = model.readings[d.id], points = r.history.filter((p) => p.at >= start);
-    const nums = points.filter((p) => Number.isFinite(p.value));
-    cv.text(d.name + ' | recent ' + seconds + ' s', 18, 15, 20, '#edf3fa');
-    if (!d.numeric || !nums.length) {
-        cv.text(d.numeric ? 'No valid numeric samples yet' : 'Graph unavailable: no validated numeric conversion', 18, 100, 19, '#a9b5c7');
-        return cv;
-    }
-    let low = Math.min.apply(null, nums.map((p) => p.value)), high = Math.max.apply(null, nums.map((p) => p.value));
-    if (low === high) { low -= 0.5; high += 0.5; }
-    cv.line(95, 55, 95, 215, 1, '#657287'); cv.line(95, 215, 875, 215, 1, '#657287');
-    cv.text(high.toFixed(3), 5, 50, 15, '#a9b5c7'); cv.text(low.toFixed(3), 5, 195, 15, '#a9b5c7');
-    cv.text('-' + seconds + ' s', 95, 230, 15, '#a9b5c7'); cv.text('Now', 825, 230, 15, '#a9b5c7');
-    const xy = (p) => [95 + 780 * (p.at - start) / (seconds * 1000), 215 - 160 * (p.value - low) / (high - low)];
-    let previous = null;
-    points.forEach((p) => {
-        if (p.value === null) { previous = null; return; }
-        const pos = xy(p);
-        if (previous && p.at - previous.at <= d.staleMs) {
-            const last = xy(previous); cv.line(last[0], last[1], pos[0], pos[1], 2, '#57c7ff');
-        } else cv.line(pos[0] - 1, pos[1], pos[0] + 1, pos[1], 2, '#57c7ff');
-        previous = p;
-    });
+const blue = '#81c4ff';
+const titles = { driving: 'Driving', temperatures: 'Temperatures', health: 'Engine health' };
+
+function draw(ctx, vm) {
+    const cv = ctx.canvas(1600, 520), t = ctx.theme(), model = vm.model;
+    cv.clear(t.bg);
+    G.frame(cv, t, model.settings.order.map((id) => titles[id]), model.settings.order.indexOf(vm.page),
+        ctx.preview ? [{ text: 'PREVIEW', color: blue }] : []);
+    const full = cv.chrome && cv.place && cv.place.full;
+    const headH = cv.chrome ? FULL.headH : 0;
+    const contentTop = full ? (headH - cv.place.oy) / cv.place.scale + 8 : G.TOP;
+    const contentBottom = full ? (cv.place.h - FULL.barH - cv.place.oy) / cv.place.scale - 8 :
+        cv.h - FULL.barH - 8;
+    const page = Object.assign({}, vm, { contentTop, contentBottom });
+    if (vm.page === 'driving') driving(cv, t, page);
+    else if (vm.page === 'temperatures') temperatures(cv, t, page);
+    else health(cv, t, page);
+
+    const width = full ? cv.place.w : cv.w, height = full ? cv.place.h : cv.h;
+    const buttonWidth = full ? 224 : 200, leftEdge = full ? HMI.left - cv.place.x : 0;
+    const left = leftEdge + (width - leftEdge - buttonWidth * vm.actions.length) / 2;
+    const buttons = vm.actions.map((action, i) => ({ label: action.label, x: left + i * buttonWidth, w: buttonWidth }));
+    if (full) cv.xf(1, 0, 0);
+    G.menuBar(cv, Object.assign({}, t, { dim: t.text }), 0, height - FULL.barH, width, FULL.barH, buttons, -1, 'slim', -1);
+    const selected = vm.actions.findIndex((action) => action.id === vm.focused);
+    if (selected >= 0) cv.fillRect(buttons[selected].x + 12, height - 3, buttonWidth - 24, 3, blue);
+    if (vm.notice) text(cv, vm.notice, leftEdge + 16, height - FULL.barH / 2 + 5,
+        Math.max(0, left - leftEdge - 32), 14, t.warn);
+    if (full) cv.xf();
     return cv;
 }
-module.exports = { value, date, summary, graph };
+module.exports = { titles, draw };
