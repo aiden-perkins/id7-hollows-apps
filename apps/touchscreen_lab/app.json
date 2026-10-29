@@ -1,0 +1,86 @@
+{
+  "id": "touchscreen_lab",
+  "title": "Touchscreen Lab",
+  "description": "Display-only touch reception, renderer ownership, OEM input relay and session evidence",
+  "version": "1.0.0",
+  "vendor": "custom",
+  "loggingId": "OATC",
+  "iconGlyph": "TOUCH",
+  "signals": {
+    "de.bmw.infotainment.hmi.inputrelay.InputRelayManager": {
+      "_instances": ["InputRelayManagerInst1"],
+      "_methods": ["createInputRelay", "destroyInputRelay"]
+    },
+    "de.bmw.infotainment.hmi.inputrelay.InputRelay": {
+      "_instances": "*",
+      "status": "rs",
+      "_broadcasts": ["onTouchInput"]
+    }
+  },
+  "screens": [
+    {
+      "name": "MAIN",
+      "kind": "canvas",
+      "title": "Touchscreen Lab",
+      "buttons": [
+        ["BTN_PAGES", "Pages"],
+        ["BTN_SESSION", "Start session"],
+        ["BTN_PROBE", "Native check"],
+        ["BTN_STOP", "Stop probes"],
+        ["BTN_MARK", "Mark result"],
+        ["BTN_SAVE", "Save / stop"]
+      ]
+    },
+    {
+      "name": "PAGES",
+      "title": "Touchscreen experiments",
+      "items": [
+        ["button", "OPEN_OVERVIEW", "Overview / native check"],
+        ["button", "OPEN_RENDERER", "Renderer coordinates and gestures"],
+        ["button", "OPEN_RELAY", "OEM display input relay"],
+        ["button", "OPEN_EVIDENCE", "Evidence / session storage"],
+        ["button", "OPEN_GUIDE", "Parked test procedure"]
+      ]
+    },
+    {
+      "name": "MARKS",
+      "title": "Operator observation (not automatic proof)",
+      "items": [
+        ["button", "MARK_STOCK", "Stock touchscreen works normally"],
+        ["button", "MARK_NATIVE", "I touched the native check button"],
+        ["button", "MARK_CORNERS", "Touched test-area corners and center"],
+        ["button", "MARK_DRAG", "Dragged horizontally and vertically"],
+        ["button", "MARK_HOLD", "Held one finger still, then lifted"],
+        ["button", "MARK_MULTI", "Tried two fingers (support unproven)"],
+        ["button", "MARK_UNAFFECTED", "Stock HMI touch remained unaffected"],
+        ["button", "MARK_DOUBLE", "Both app and stock HMI reacted"],
+        ["button", "MARK_MISSING", "Expected touchscreen input was missing"],
+        ["button", "MARK_UNCERTAIN", "Physical result uncertain"],
+        ["button", "MARK_RETURN", "Return without marking"]
+      ]
+    }
+  ],
+  "settings": [
+    {
+      "key": "layout",
+      "label": "Native-control test layout",
+      "type": "choice",
+      "default": "standard",
+      "options": [["standard", "Standard (native controls)"]]
+    },
+    {
+      "key": "renderer",
+      "label": "Drawing backend",
+      "type": "choice",
+      "default": "auto",
+      "options": [["auto", "Automatic"], ["software", "Software (no renderer probe)"]]
+    },
+    {
+      "key": "theme",
+      "label": "Theme",
+      "type": "choice",
+      "default": "m_tricolour",
+      "options": [["m_tricolour", "M Tricolour"]]
+    }
+  ]
+}

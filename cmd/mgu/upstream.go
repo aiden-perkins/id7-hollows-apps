@@ -28,7 +28,7 @@ func (a *application) checkUpstream() error {
 
 func (a *application) isUpstreamApp(id string) bool {
 	// Local apps take precedence even if upstream later adds their namesakes.
-	return id != "mgu_lab" && id != "ambient_lighting" && id != "live_data_viewer" && id != "trip_data"
+	return id != "mgu_lab" && id != "lighting_lab" && id != "xdrive_lab" && id != "touchscreen_lab" && id != "ambient_lighting" && id != "live_data_viewer" && id != "trip_data"
 }
 
 func (a *application) appManifest(id string) string {
