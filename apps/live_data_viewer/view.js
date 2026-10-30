@@ -1,19 +1,18 @@
 'use strict';
 const G = require('./kit/gauges');
 const { HMI, FULL } = require('./kit/display');
-const { text } = require('./instruments');
+const { C, text } = require('./instruments');
 const driving = require('./driving');
 const temperatures = require('./temperatures');
 const health = require('./health');
 
-const blue = '#81c4ff';
 const titles = { driving: 'Driving', temperatures: 'Temperatures', health: 'Engine health' };
 
 function draw(ctx, vm) {
     const cv = ctx.canvas(1600, 520), t = ctx.theme(), model = vm.model;
     cv.clear(t.bg);
     G.frame(cv, t, model.settings.order.map((id) => titles[id]), model.settings.order.indexOf(vm.page),
-        ctx.preview ? [{ text: 'PREVIEW', color: blue }] : []);
+        vm.demo ? [{ text: 'DEMO', color: C.blue }] : ctx.preview ? [{ text: 'PREVIEW', color: C.blue }] : []);
     const full = cv.chrome && cv.place && cv.place.full;
     const headH = cv.chrome ? FULL.headH : 0;
     const contentTop = full ? (headH - cv.place.oy) / cv.place.scale + 8 : G.TOP;
@@ -31,7 +30,7 @@ function draw(ctx, vm) {
     if (full) cv.xf(1, 0, 0);
     G.menuBar(cv, Object.assign({}, t, { dim: t.text }), 0, height - FULL.barH, width, FULL.barH, buttons, -1, 'slim', -1);
     const selected = vm.actions.findIndex((action) => action.id === vm.focused);
-    if (selected >= 0) cv.fillRect(buttons[selected].x + 12, height - 3, buttonWidth - 24, 3, blue);
+    if (selected >= 0) cv.fillRect(buttons[selected].x + 12, height - 3, buttonWidth - 24, 3, C.blue);
     if (vm.notice) text(cv, vm.notice, leftEdge + 16, height - FULL.barH / 2 + 5,
         Math.max(0, left - leftEdge - 32), 14, t.warn);
     if (full) cv.xf();

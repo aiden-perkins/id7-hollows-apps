@@ -1,0 +1,250 @@
+{
+  "id": "other_data_lab",
+  "title": "Other Data Lab",
+  "description": "Read-only exhaust commands, transfer-case telemetry, wheel direction, rear steering and electric anti-roll research",
+  "version": "1.0.0",
+  "vendor": "custom",
+  "loggingId": "OA9J",
+  "iconGlyph": "DATA",
+  "maxDiskUsage": 16777216,
+  "signals": {
+    "de.bmw.powertrain.Powertrain": {
+      "_instances": "1",
+      "ActualValueRPMWheel": "s",
+      "WheelMomentDrive1": "s",
+      "WheelMomentDrive4": "s"
+    },
+    "de.bmw.infrastructure.analytics.BasicDataSet": {
+      "_instances": "1",
+      "basicDataSet": "s"
+    },
+    "com.harman.infotainment.systemfunctions.tasu.tasu.InternalTasu": {
+      "_instances": "SystemFunctionsInternalTasuInst1",
+      "_methods": [
+        "sendTasuRequest"
+      ],
+      "_broadcasts": [
+        "sendTasuResponse"
+      ]
+    }
+  },
+  "screens": [
+    {
+      "name": "MAIN",
+      "title": "Other Data Lab",
+      "items": [
+        [
+          "text3",
+          "HOME_STATE",
+          "Read-only / diagnostics OFF"
+        ],
+        [
+          "button",
+          "HOME_TOPICS",
+          "Research categories"
+        ],
+        [
+          "button",
+          "HOME_ENABLE",
+          "Enable read-only diagnostics"
+        ],
+        [
+          "button",
+          "HOME_HISTORY",
+          "Evidence history / markers"
+        ],
+        [
+          "button",
+          "HOME_SAVE",
+          "Save evidence snapshot"
+        ],
+        [
+          "button",
+          "HOME_HELP",
+          "Scope / safety / retention"
+        ],
+        [
+          "text3",
+          "HOME_NOTICE",
+          ""
+        ]
+      ]
+    },
+    {
+      "name": "TOPIC",
+      "title": "Research channel",
+      "parent": "MAIN",
+      "items": [
+        [
+          "text3",
+          "TOPIC_FINDING",
+          ""
+        ],
+        [
+          "button",
+          "TOPIC_PROBES",
+          "Fixed read probes"
+        ],
+        [
+          "button",
+          "TOPIC_NATIVE",
+          "Native raw notifications"
+        ],
+        [
+          "button",
+          "TOPIC_PROTOCOL",
+          "Observation protocol"
+        ],
+        [
+          "button",
+          "TOPIC_BACK",
+          "Back to categories"
+        ]
+      ]
+    },
+    {
+      "name": "PROBE",
+      "title": "Read-only ECU probe",
+      "parent": "TOPIC",
+      "items": [
+        [
+          "text3",
+          "PROBE_NAME",
+          ""
+        ],
+        [
+          "text3",
+          "PROBE_STATE",
+          ""
+        ],
+        [
+          "button",
+          "PROBE_IDENTIFY",
+          "Read ECU identity (F150)"
+        ],
+        [
+          "button",
+          "PROBE_READ",
+          "Read selected DID once"
+        ],
+        [
+          "button",
+          "PROBE_FIELDS",
+          "Decoded fields / raw states"
+        ],
+        [
+          "button",
+          "PROBE_RAW",
+          "Complete request / reply / outcome"
+        ],
+        [
+          "button",
+          "PROBE_SCHEMA",
+          "Full layout / conversion / limits"
+        ],
+        [
+          "button",
+          "PROBE_SOURCE",
+          "Original ISTA tables / source hash"
+        ],
+        [
+          "button",
+          "PROBE_BACK",
+          "Back to research channel"
+        ]
+      ]
+    },
+    {
+      "name": "NATIVE",
+      "title": "Raw native notification",
+      "parent": "TOPIC",
+      "items": [
+        [
+          "text3",
+          "NATIVE_STATE",
+          ""
+        ],
+        [
+          "button",
+          "NATIVE_RAW",
+          "Complete latest raw notification"
+        ],
+        [
+          "button",
+          "NATIVE_SCHEMA",
+          "Complete native datatype closure"
+        ],
+        [
+          "button",
+          "NATIVE_BACK",
+          "Back to research channel"
+        ]
+      ]
+    },
+    {
+      "name": "HISTORY",
+      "title": "Evidence history",
+      "parent": "MAIN",
+      "items": [
+        [
+          "text3",
+          "HISTORY_STATE",
+          ""
+        ],
+        [
+          "button",
+          "HISTORY_MARK",
+          "Record operator marker"
+        ],
+        [
+          "button",
+          "HISTORY_EVENTS",
+          "Retained event details"
+        ],
+        [
+          "button",
+          "HISTORY_SAVE",
+          "Save evidence snapshot"
+        ],
+        [
+          "button",
+          "HISTORY_BACK",
+          "Home"
+        ]
+      ]
+    },
+    {
+      "name": "RAW",
+      "title": "Complete raw evidence",
+      "parent": "MAIN",
+      "items": [
+        [
+          "text3",
+          "RAW_POSITION",
+          ""
+        ],
+        [
+          "button",
+          "RAW_BODY",
+          ""
+        ],
+        [
+          "button",
+          "RAW_PREV",
+          "Previous page"
+        ],
+        [
+          "button",
+          "RAW_NEXT",
+          "Next page"
+        ],
+        [
+          "button",
+          "RAW_BACK",
+          "Back"
+        ]
+      ]
+    }
+  ],
+  "settings": []
+}

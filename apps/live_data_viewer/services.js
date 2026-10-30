@@ -17,7 +17,7 @@ class Services {
                 const c = this.connections[key];
                 if (c.available && !c.fetching && Date.now() >= c.nextPoll) this.fetch(c);
             });
-        }, 250);
+        }, 25);
         if (this.timer.unref) this.timer.unref();
     }
     alive(c) { return !this.closed && !c.closed && this.connections[c.key] === c; }
@@ -46,7 +46,7 @@ class Services {
     }
     async open(def) {
         const c = { key: def.key, def, proxy: null, closed: false, available: false,
-            reads: {}, fetching: false, nextPoll: 0, epoch: 0, waitTimer: null };
+            reads: {}, notifiedAt: {}, fetching: false, nextPoll: 0, epoch: 0, waitTimer: null };
         this.connections[c.key] = c;
         this.model.transport(c.key, null, 'waiting', 'Connecting to vehicle provider');
         if (!this.signals.hasNative()) {
@@ -60,7 +60,7 @@ class Services {
             if (!this.alive(c)) return;
             await deadline(this.signals.onAvailable(c.proxy, (available) => {
                 if (!this.alive(c)) return;
-                if (available !== c.available) c.epoch++;
+                if (available !== c.available) { c.epoch++; c.notifiedAt = {}; }
                 c.available = available;
                 this.model.transport(c.key, null, available ? 'waiting' : 'unavailable',
                     available ? 'Provider connected; waiting for field data' : 'Vehicle provider unavailable');
@@ -73,7 +73,10 @@ class Services {
                 if (!this.alive(c)) return;
                 try {
                     await deadline(this.signals.on(c.proxy, field, (raw) => {
-                        if (this.alive(c) && c.available) this.model.receive(c.key, field, raw, 'notification');
+                        if (this.alive(c) && c.available) {
+                            c.notifiedAt[field] = Date.now();
+                            this.model.receive(c.key, field, raw, 'notification');
+                        }
                     }, this.ctx.log), 2000, field + ' subscription');
                 } catch (e) { if (this.alive(c)) this.model.transport(c.key, field, 'error', 'Subscription: ' + e.message); }
             }
@@ -106,7 +109,8 @@ class Services {
         try {
             for (const field of Object.keys(c.def.fields)) {
                 if (!this.alive(c) || !c.available) break;
-                if (c.def.fields[field].read) {
+                const pollMs = /\.TPMS/.test(c.def.iface) ? 5000 : Math.max(100, this.model.settings.refreshMs);
+                if (c.def.fields[field].read && (!c.notifiedAt[field] || Date.now() - c.notifiedAt[field] >= pollMs)) {
                     try { await this.read(c, field); } catch (e) { failed = true; }
                 }
             }

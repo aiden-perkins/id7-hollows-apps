@@ -234,7 +234,12 @@ class DiagnosticServices {
             else if (reply) this._deliver(op.group, reply);
         }
         const refresh = this.model.settings.refreshMs;
-        op.group.nextAt = Date.now() + (Number.isFinite(refresh) && refresh > 0 ? Math.max(250, refresh) : 1000);
+        const cadence = Math.min.apply(null, op.group.entries.map(({ d }) =>
+            Number.isFinite(d.pollMs) && d.pollMs > 0 ? d.pollMs : refresh));
+        // Inputs get their own cadence; slow tank/battery reads no longer dictate pedal latency.
+        // Never overlap calls or hammer a refused/unsupported DID at the fast success rate.
+        op.group.nextAt = Date.now() + Math.max(error ? 1000 : 50,
+            Number.isFinite(cadence) && cadence > 0 ? cadence : 1000);
         // Even a response timeout cannot start a second native call before the first settles.
         this._release(op);
     }

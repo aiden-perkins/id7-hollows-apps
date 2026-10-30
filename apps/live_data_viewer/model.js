@@ -5,6 +5,7 @@ D.definitions.forEach((d) => { definitionsById[d.id] = d; });
 class Model {
     constructor(storage, changed) {
         this.storage = storage; this.changed = changed; this.settings = storage.loadSettings();
+        this.definitions = definitionsById;
         this.startedAt = Date.now(); this.readings = {}; this.active = new Set();
         D.definitions.forEach((d) => { this.readings[d.id] = {
             decoded: { state: d.source || d.dependsOn ? 'waiting' : 'unavailable', note: d.source || d.dependsOn ? 'Select the category to collect data' : d.notes },
@@ -131,7 +132,7 @@ class Model {
     }
     snapshot(d) {
         const r = this.readings[d.id], now = Date.now(), current = this.state(d);
-        return this.storage.snapshot({ schemaVersion: 1, savedAt: now, definitionVersion: 2,
+        return this.storage.snapshot({ schemaVersion: 1, savedAt: now, definitionVersion: 4,
             signal: { id: d.id, name: d.name, category: d.page, group: d.group, kind: d.kind,
                 interface: d.source ? D.IF[d.source] : null, instance: d.instance || '1',
                 field: d.field || null, member: d.member || null, sourceLead: d.lead || null,

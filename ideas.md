@@ -1,10 +1,18 @@
 # random
 - make upstream apps use old icons, dunno when it changed
 - get new icons for my apps
-- disassemble mgu lab - no longer needed
-- ask it to probe the head unit files, see if it can find anything interesting to work on project wise
 
 # research items
+I have some deep research items in ideas.md, i want you to take a look at the "" and do a deep research for it using reverse engineer anything. 
+
+this is the data available to look through:
+- the full mgu headunit storage is in out/downloads
+- other data related items are in this project folder as well
+- ista is fully installed with a full dataset for all coding options, so you can look through this
+- esys is also installed with a bunch of data, also useful to look through this
+- anything else you may find, try your best
+
+the goal is to read what I wrote and make a markdown file outlining your findings, then after that create a lab app that specifically tests your findings, so it can be refined and polished later but debugged initially  
 
 ## 2wd/4wd mxdrive converting - testing
 - be able to convert through an app
@@ -19,7 +27,7 @@
 - be able to see touch screen events and make uis so much better
 - swiping and clicking
 
-## other data to be found
+## other data to be found - testing
 - exhaust valve position
 - transfer case clutch power/percent/engaged amount? whats sent to the front wheels
 - individual wheel speed and direction
@@ -81,28 +89,17 @@ go build -buildvcs=false -o out/mgu.exe ./cmd/mgu
 
 
 ## live data viewer 
-- update way faster than it currently is
+- check colors & check data
 
 ### driving
-- if the parking break is applied or not
-- if the kickdown is engaged accel pedal
-- make the brake lights on the mini car match the brake pedal
-- fuel cannister for gas numbers
-- remove trans pressure - moved to temps
-- more decimals for fuel
+- maybe switch the guages to horizontal bars
+- make the fuel  item better, 2 digits maybe
+- make the battery thing look better
 
 ### temperatures
-- remove the titles to each graph, they are already shown in the cards themselves
-- what is OBS? 
-- what are these horrible looking colors? please make all colors uniform accross the app
-- theres a lot of room between the temp title and the graph, make the graphs slightly wider?
-- isnt there per bank IAT?
-- remove tire pressure graph and replace with oil/trans pressure + others
+- charge-cooler coolant, per-bank exhaust/catalyst temperatures, and transfer-case/rear-differential
 
 ### engine health
-- whats with the text on the bottom of the timing/misfire/knock? remove it
-- remove the actual & target stuff from the graphs, they should take up the whole area with the titles
-- somewhere put a small key with the colors for actual/target
-- i know misfires are per cylinder and so is timing correct, is knocks? i thought there was just a knock counter per bank
-- change the layout to make mini v8 with the clyinders, just barely though, i dont want a full blown v8 image, just use it for inspiration so I can tell
-
+- why is knock a decimal
+- remove the "same counter period" text and whatever the 8/8 fresh is, what are these what do they mean?
+- lots of empty space margins from the cylinder number values, fill it out a bit

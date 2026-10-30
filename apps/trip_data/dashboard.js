@@ -1,5 +1,6 @@
 'use strict';
 const G = require('./kit/gauges');
+const { HMI, FULL } = require('./kit/display');
 const V = require('./view');
 
 const W = 1600, H = 520, X = 24, RIGHT = 1576;
@@ -16,31 +17,36 @@ function label(cv, text, x, y, width, size, color, options) {
     cv.text(text, x, y, size, color, opts);
 }
 function panel(cv, t, x, y, w, h, heading) {
-    cv.roundRect(x, y, w, h, 9, t.panelBottom);
-    cv.strokeRoundRect(x, y, w, h, 9, 1, t.panelEdge);
-    cv.fillRect(x + 16, y + 14, 26, 3, blue);
-    cv.fillRect(x + 45, y + 14, 26, 3, '#16588e');
-    cv.fillRect(x + 74, y + 14, 26, 3, red);
-    if (heading) label(cv, heading, x + 16, y + 43, w - 32, 20, t.dim);
-}
-function metric(cv, t, x, y, w, h, name, value, unit, sub, color) {
-    panel(cv, t, x, y, w, h);
-    label(cv, name.toUpperCase(), x + 16, y + 42, w - 32, 17, t.dim, { font: 'bold', spacing: 1 });
-    label(cv, typeof value === 'string' ? value : amount(value), x + 16, y + Math.min(98, h - 32), w - 32, h >= 140 ? 43 : 30, color || t.text, { font: typeof value === 'string' && !/^[0-9:.+-]+$/.test(value) ? 'label' : 'num' });
-    if (unit) label(cv, unit, x + w - 18, y + 43, w - 32, 16, blue, { align: 'right' });
-    if (sub) label(cv, sub, x + 16, y + h - 13, w - 32, 15, t.dim);
+    cv.roundRect(x, y, w, h, 8, t.panelBottom);
+    cv.line(x + 14, y + 1, x + w - 14, y + 1, 1, t.panelEdge);
+    if (heading) label(cv, heading, x + 16, y + 27, w - 32, 17, t.dim);
 }
 function chip(cv, t, action, rect, focused) {
     const { x, y, w, h } = rect;
-    cv.roundRect(x, y, w, h, 7, focused ? '#24344a' : t.panelTop);
-    cv.strokeRoundRect(x, y, w, h, 7, focused ? 2 : 1, focused ? blue : t.panelEdge);
-    if (focused) cv.fillRect(x + 12, y + h - 5, w - 24, 3, red);
+    cv.roundRect(x, y, w, h, 5, focused ? '#152331' : t.panelBottom);
+    if (focused) cv.fillRect(x + 12, y + h - 3, w - 24, 3, blue);
     label(cv, action.label, x + w / 2, y + h / 2 + 7, w - 26, 20, action.enabled === false ? t.dim : t.text, { align: 'center', font: 'bold' });
 }
-function actions(cv, t, vm, y) {
-    const all = vm.actions, perPage = 6, page = Math.floor(vm.focus / perPage), start = page * perPage;
-    const shown = all.slice(start, start + perPage), gap = 12, width = (1552 - gap * (shown.length - 1)) / Math.max(1, shown.length);
-    shown.forEach((a, i) => chip(cv, t, a, { x: X + i * (width + gap), y: y || 428, w: width, h: 52 }, vm.focus === start + i));
+function actions(cv, t, vm) {
+    const full = cv.chrome && cv.place && cv.place.full;
+    const width = full ? cv.place.w : cv.w, height = full ? cv.place.h : cv.h;
+    const leftEdge = full ? HMI.left - cv.place.x : 0;
+    const start = vm.page === 'history' ? vm.history.length : 0;
+    const shown = ['menu', 'actions', 'edit'].includes(vm.page) ? [] : vm.actions.slice(start);
+    const buttonWidth = Math.min(full ? 224 : 240, (width - leftEdge - 24) / Math.max(1, shown.length));
+    const left = leftEdge + (width - leftEdge - buttonWidth * shown.length) / 2;
+    const buttons = shown.map((a, i) => ({ label: a.label, x: left + i * buttonWidth, w: buttonWidth }));
+    if (full) cv.xf(1, 0, 0);
+    G.menuBar(cv, Object.assign({}, t, { dim: t.text }), 0, height - FULL.barH, width, FULL.barH, buttons, -1, 'slim', -1);
+    const selected = vm.focus - start;
+    if (selected >= 0 && selected < shown.length) {
+        cv.fillRect(buttons[selected].x + 12, height - 3, buttonWidth - 24, 3, blue);
+    }
+    shown.forEach((a, i) => {
+        if (a.enabled === false) cv.fillRect(buttons[i].x, height - FULL.barH + 2, buttonWidth, FULL.barH - 5, '#00000080');
+    });
+    if (!shown.length) label(cv, 'Turn to select / press to open / left tilt to return', leftEdge + 24, height - 18, width - leftEdge - 48, 16, t.dim);
+    if (full) cv.xf();
 }
 function coverageBar(cv, t, x, y, w, name, ms, total) {
     const fraction = total > 0 ? Math.min(1, Math.max(0, ms / total)) : null;
@@ -61,13 +67,13 @@ function chart(cv, t, vm, box, metricName, axis, controls) {
     const xkey = config.axis === 'distance' ? 'distance' : 'elapsedMs', key = config.metric;
     const points = V.windowPoints(vm.projection, config);
     const valid = points.filter((p) => numeric(p[key]) && numeric(p[xkey]) && !p.gaps[key] && !(xkey === 'distance' && p.gaps.distance));
-    const left = box.x + 86, top = box.y + (box.compact ? 39 : 31);
-    const width = box.w - (box.compact ? 106 : 112), height = box.h - (box.compact ? 84 : 76);
+    const left = box.x + 86, top = box.y + (box.compact ? 39 : 36);
+    const width = box.w - (box.compact ? 106 : 112), height = box.h - (box.compact ? 84 : 81);
     const caption = box.compact && key === 'mpg' ? 'US MPG / 60 s' :
         (key === 'altitude' ? 'ELEVATION' : key === 'mpg' ? 'ROLLING ECONOMY / 60 s' : 'VEHICLE SPEED') + ' / ' + V.unit(key);
     if (box.compact) {
         const summaryWidth = box.summary ? Math.min(cv.textWidth(box.summary, 15, { font: 'bold' }) + 12, box.w * 0.65) : 0;
-        label(cv, caption, box.x + 114, box.y + 24, box.w - 146 - summaryWidth, 15, t.dim);
+        label(cv, caption, box.x + 16, box.y + 24, box.w - 48 - summaryWidth, 15, t.dim);
         if (box.summary) label(cv, box.summary, box.x + box.w - 18, box.y + 24, summaryWidth, 15, t.text, { align: 'right', font: 'bold' });
     } else label(cv, caption, left, box.y + 21, width, 15, t.dim);
     for (let i = 0; i < 5; i++) cv.line(left, top + height * i / 4, left + width, top + height * i / 4, 1, t.track);
@@ -118,10 +124,11 @@ function trip(cv, t, vm) {
         a && a.matchedMs && a.matchedMiles > 0 ? 'Coasting' : '--';
     const averageSpeed = a && a.speedMs && a.durationMs ? amount(a.distanceMiles * 3600000 / a.durationMs) : '--';
     const movingSpeed = a && a.movingMs ? amount(a.movingMiles * 3600000 / a.movingMs) : '--';
-    panel(cv, t, 24, 93, 420, 322, vm.saved ? 'SAVED TRIP' : 'LIVE VEHICLE');
-    label(cv, amount(live && live.speed.state === 'live' ? live.speed.value : null), 42, 197, 285, 73, t.text, { font: 'num' });
-    cv.text('mph', 423, 196, 23, blue, { align: 'right' });
-    label(cv, 'Gear ' + (live && live.gear.state === 'live' ? live.gear.value : '--'), 423, 136, 160, 23, t.text, { align: 'right' });
+    const top = vm.contentTop, h = vm.contentBottom - top, half = (h - 12) / 2;
+    panel(cv, t, 24, top, 420, h, vm.saved ? 'TRIP AVERAGE' : vm.demo ? 'DEMO VEHICLE' : 'LIVE VEHICLE');
+    label(cv, vm.saved ? averageSpeed : amount(live && live.speed.state === 'live' ? live.speed.value : null), 42, top + 105, 285, 73, blue, { font: 'num' });
+    cv.text('mph', 423, top + 104, 23, blue, { align: 'right' });
+    if (!vm.saved) label(cv, 'Gear ' + (live && live.gear.state === 'live' ? live.gear.value : '--'), 423, top + 27, 160, 23, t.text, { align: 'right' });
     const cells = [
         ['Distance / mi', a && a.speedMs ? amount(a.distanceMiles) : '--'],
         ['Timer', V.duration(a && a.durationMs)],
@@ -131,39 +138,38 @@ function trip(cv, t, vm) {
         ['Moving time', a && a.speedMs ? V.duration(a.movingMs) : '--:--:--'],
     ];
     cells.forEach((cell, i) => {
-        const x = 42 + i % 2 * 201, y = 225 + Math.floor(i / 2) * 54;
+        const x = 42 + i % 2 * 201, y = top + 137 + Math.floor(i / 2) * (h - 180) / 3;
         label(cv, cell[0], x, y, 181, 16, t.dim);
         label(cv, cell[1], x, y + 28, 181, 27, t.text, { font: 'num' });
     });
     label(cv, 'Speed ' + (a ? V.coverage(a.speedMs, a.durationMs) : '--') + ' / fuel ' +
-        (a ? V.coverage(a.fuelMs, a.durationMs) : '--'), 42, 400, 382, 14, t.dim);
-    chart(cv, t, vm, { x: 460, y: 93, w: 1116, h: 155, compact: true,
+        (a ? V.coverage(a.fuelMs, a.durationMs) : '--'), 42, top + h - 15, 382, 14, t.dim);
+    chart(cv, t, vm, { x: 460, y: top, w: 1116, h: half, compact: true,
         summary: 'Avg ' + averageSpeed + ' mph / Moving avg ' + movingSpeed + ' mph' }, 'speed', 'time', false);
-    chart(cv, t, vm, { x: 460, y: 260, w: 550, h: 155, compact: true,
+    chart(cv, t, vm, { x: 460, y: top + half + 12, w: 550, h: half, compact: true,
         summary: 'Avg ' + economy }, 'mpg', 'time', false);
-    chart(cv, t, vm, { x: 1026, y: 260, w: 550, h: 155, compact: true }, 'altitude', 'time', false);
-    actions(cv, t, vm);
+    chart(cv, t, vm, { x: 1026, y: top + half + 12, w: 550, h: half, compact: true }, 'altitude', 'time', false);
 }
 function elevation(cv, t, vm) {
-    chart(cv, t, vm, { x: 24, y: 93, w: 1090, h: 262 }, 'altitude', 'time', false);
+    const top = vm.contentTop, h = vm.contentBottom - top;
+    chart(cv, t, vm, { x: 24, y: top, w: 1090, h: h - 60 }, 'altitude', 'time', false);
     const a = vm.trip && vm.trip.stats.altitude;
     const values = [['First', a && a.start], ['Last', a && a.end], ['Net', a && a.start !== null && a.end !== null ? a.end - a.start : null], ['Minimum', a && a.min], ['Maximum', a && a.max]];
     values.forEach((v, i) => {
         const x = 24 + i * 221;
-        cv.roundRect(x, 368, 205, 47, 5, t.panelBottom);
-        cv.text(v[0], x + 10, 385, 15, t.dim);
-        label(cv, amount(v[1]) + ' ft', x + 10, 407, 185, 21, t.text, { font: 'num' });
+        cv.roundRect(x, top + h - 48, 205, 48, 5, t.panelBottom);
+        cv.text(v[0], x + 10, top + h - 31, 15, t.dim);
+        label(cv, amount(v[1]) + ' ft', x + 10, top + h - 8, 185, 21, blue, { font: 'num' });
     });
-    panel(cv, t, 1130, 93, 446, 322, 'CLIMBING ESTIMATES');
+    panel(cv, t, 1130, top, 446, h, 'CLIMBING ESTIMATES');
     [['Ascent', a && a.coverageMs ? a.ascent : null, 'ft'], ['Descent', a && a.coverageMs ? a.descent : null, 'ft'],
         ['Vertical speed', a && a.verticalFpm, 'ft/min']].forEach((v, i) => {
-        const y = 172 + i * 67;
+        const y = top + 84 + i * (h - 180) / 3;
         cv.text(v[0], 1148, y, 18, t.dim);
         label(cv, amount(v[1]) + ' ' + v[2], 1556, y + 3, 240, 28, i === 1 ? t.text : blue, { align: 'right', font: 'num' });
     });
-    coverageBar(cv, t, 1148, 365, 408, 'Valid height coverage', a ? a.coverageMs : 0, vm.trip ? vm.trip.stats.durationMs : 0);
-    label(cv, vm.trip ? 'Noise deadband ' + vm.trip.policy.altitudeThresholdFt + ' ft / GPS reference unconfirmed' : 'Waiting for a recorded trip', 1148, 400, 410, 15, t.dim);
-    actions(cv, t, vm);
+    coverageBar(cv, t, 1148, top + h - 52, 408, 'Valid height coverage', a ? a.coverageMs : 0, vm.trip ? vm.trip.stats.durationMs : 0);
+    label(cv, vm.trip ? 'Noise deadband ' + vm.trip.policy.altitudeThresholdFt + ' ft / GPS reference unconfirmed' : 'Waiting for a recorded trip', 1148, top + h - 15, 410, 15, t.dim);
 }
 function table(cv, t, columns, rows, x, y, w, rowHeight, size) {
     let px = x;
@@ -178,21 +184,22 @@ function table(cv, t, columns, rows, x, y, w, rowHeight, size) {
 }
 function fuel(cv, t, vm) {
     const s = vm.trip, a = s && s.stats;
-    panel(cv, t, 24, 93, 348, 322, 'FUEL SUMMARY');
-    label(cv, 'FUEL USED / US GAL', 42, 174, 310, 17, t.dim, { font: 'bold' });
-    label(cv, a && a.fuelMs ? amount(a.fuelGallons) : '--', 42, 227, 310, 44, t.text, { font: 'num' });
-    label(cv, 'AVERAGE / US MPG', 42, 278, 310, 17, t.dim, { font: 'bold' });
+    const top = vm.contentTop, h = vm.contentBottom - top;
+    panel(cv, t, 24, top, 348, h, 'FUEL SUMMARY');
+    label(cv, 'FUEL USED / US GAL', 42, top + 73, 310, 17, t.dim, { font: 'bold' });
+    label(cv, a && a.fuelMs ? amount(a.fuelGallons) : '--', 42, top + 126, 310, 44, blue, { font: 'num' });
+    label(cv, 'AVERAGE / US MPG', 42, top + h * 0.57, 310, 17, t.dim, { font: 'bold' });
     const economy = a && a.matchedMs && a.matchedGallons > 0 ? amount(a.matchedMiles / a.matchedGallons) :
         a && a.matchedMs && a.matchedMiles > 0 ? 'Coasting' : '--';
-    label(cv, economy, 42, 329, 310, 42, green, { font: economy === 'Coasting' ? 'label' : 'num' });
-    coverageBar(cv, t, 42, 368, 310, 'Matched coverage', a ? a.matchedMs : 0, a ? a.durationMs : 0);
-    label(cv, 'Rolling graph: 60-second MPG', 42, 402, 310, 16, t.dim);
-    chart(cv, t, vm, { x: 388, y: 93, w: 680, h: 322 }, 'mpg', 'time', false);
-    panel(cv, t, 1084, 93, 492, 322);
+    label(cv, economy, 42, top + h * 0.57 + 51, 310, 42, green, { font: economy === 'Coasting' ? 'label' : 'num' });
+    coverageBar(cv, t, 42, top + h - 47, 310, 'Matched coverage', a ? a.matchedMs : 0, a ? a.durationMs : 0);
+    label(cv, 'Rolling graph: 60-second MPG', 42, top + h - 13, 310, 16, t.dim);
+    chart(cv, t, vm, { x: 388, y: top, w: 680, h }, 'mpg', 'time', false);
+    panel(cv, t, 1084, top, 492, h);
     const bands = s ? s.policy.speedBands : vm.speedBands;
     const names = bands.map((limit, i) => (i ? bands[i - 1] + '-' : '<') + limit).concat([bands[bands.length - 1] + '+', 'Unknown']);
     const start = vm.tablePage * 8;
-    label(cv, 'Speed bands ' + (start + 1) + '-' + Math.min(start + 8, names.length) + ' / ' + names.length, 1100, 132, 458, 17, t.dim);
+    label(cv, 'Speed bands ' + (start + 1) + '-' + Math.min(start + 8, names.length) + ' / ' + names.length, 1100, top + 27, 458, 17, t.dim);
     const rows = names.slice(start, start + 8).map((name, i) => {
         const b = a && a.bands[start + i];
         if (vm.tableCoverage) return [name, b ? amount(b.durationMs / 1000) : '--',
@@ -206,12 +213,12 @@ function fuel(cv, t, vm) {
     });
     const columns = vm.tableCoverage ? [['mph', 0.2], ['Time s', 0.2], ['Speed %', 0.2], ['Fuel %', 0.2], ['Match %', 0.2]] :
         [['mph', 0.2], ['Time s', 0.2], ['Miles', 0.2], ['US gal', 0.2], ['MPG', 0.2]];
-    table(cv, t, columns, rows, 1092, 137, 476, 30, 16);
-    actions(cv, t, vm);
+    table(cv, t, columns, rows, 1092, top + 32, 476, (h - 70) / 8, 16);
 }
 function gears(cv, t, vm) {
     const a = vm.trip && vm.trip.stats, r = a && a.rpm;
-    panel(cv, t, 24, 93, 1108, 322);
+    const top = vm.contentTop, h = vm.contentBottom - top;
+    panel(cv, t, 24, top, 1108, h);
     const rows = ['1', '2', '3', '4', '5', '6', '7', '8'].map((name) => {
         const b = a && a.gears[name];
         if (vm.tableCoverage) return [name, b ? amount(b.durationMs / 1000) : '--',
@@ -226,70 +233,74 @@ function gears(cv, t, vm) {
     });
     const columns = vm.tableCoverage ? [['Gear', 0.1], ['Time / s', 0.2], ['Speed %', 0.18], ['Fuel %', 0.18], ['Matched %', 0.2], ['Shifts', 0.14]] :
         [['Gear', 0.08], ['Time / s', 0.18], ['Miles', 0.15], ['Shifts', 0.09], ['US gal', 0.15], ['US MPG', 0.15], ['Speed %', 0.2]];
-    table(cv, t, columns, rows, 34, 119, 1088, 32, 18);
-    panel(cv, t, 1148, 93, 428, 322, 'ENGINE / GEAR SUMMARY');
+    table(cv, t, columns, rows, 34, top + 8, 1088, (h - 48) / 8, 18);
+    panel(cv, t, 1148, top, 428, h, 'ENGINE / GEAR SUMMARY');
     [
         ['RPM minimum', r && r.min], ['RPM maximum', r && r.max],
         ['Weighted RPM', r && r.coverageMs ? r.rpmMs / r.coverageMs : null],
         ['Revolutions', r && r.coverageMs ? r.rpmMs / 60000 : null],
     ].forEach((cell, i) => {
-        const x = 1166 + i % 2 * 201, y = 170 + Math.floor(i / 2) * 65;
+        const x = 1166 + i % 2 * 201, y = top + 68 + Math.floor(i / 2) * (h - 190) / 2;
         label(cv, cell[0], x, y, 185, 16, t.dim);
         label(cv, amount(cell[1]), x, y + 31, 185, 27, t.text, { font: 'num' });
     });
-    coverageBar(cv, t, 1166, 293, 392, 'RPM coverage', r ? r.coverageMs : 0, a ? a.durationMs : 0);
+    coverageBar(cv, t, 1166, top + h - 122, 392, 'RPM coverage', r ? r.coverageMs : 0, a ? a.durationMs : 0);
     const time = (key) => a && a.gears[key] ? amount(a.gears[key].durationMs / 1000) : '--';
-    label(cv, 'P ' + time('P') + ' / R ' + time('R') + ' / N ' + time('N') + ' s', 1166, 339, 392, 17, t.dim);
+    label(cv, 'P ' + time('P') + ' / R ' + time('R') + ' / N ' + time('N') + ' s', 1166, top + h - 76, 392, 17, t.dim);
     const unknown = a ? Object.keys(a.gears).filter((key) => !['1', '2', '3', '4', '5', '6', '7', '8', 'P', 'R', 'N', 'NP'].includes(key))
         .reduce((total, key) => total + a.gears[key].durationMs, 0) : null;
-    label(cv, 'N/P ' + time('NP') + ' / Unknown ' + (unknown === null ? '--' : amount(unknown / 1000)) + ' s', 1166, 371, 392, 17, t.dim);
-    label(cv, 'Shifts count forward-gear changes only.', 1166, 402, 392, 16, t.dim);
-    actions(cv, t, vm);
+    label(cv, 'N/P ' + time('NP') + ' / Unknown ' + (unknown === null ? '--' : amount(unknown / 1000)) + ' s', 1166, top + h - 44, 392, 17, t.dim);
+    label(cv, 'Shifts count forward-gear changes only.', 1166, top + h - 13, 392, 16, t.dim);
 }
 function history(cv, t, vm) {
+    const top = vm.contentTop, h = vm.contentBottom - top;
     if (!vm.history.length) {
-        empty(cv, t, 24, 103, 1552, 298, 'Your trips will appear here', 'Record a trip, then Finish to save it. Interrupted trips remain recoverable.');
+        empty(cv, t, 24, top, 1552, h, 'Your trips will appear here', 'Record a trip, then Finish to save it. Interrupted trips remain recoverable.');
     } else {
         const selected = Math.min(vm.focus, vm.history.length - 1), page = Math.floor(selected / 6), first = page * 6;
+        const rowHeight = (h - 24) / 3;
         vm.history.slice(first, first + 6).forEach((s, i) => {
-            const x = 24 + i % 2 * 784, y = 101 + Math.floor(i / 2) * 105, focused = vm.focus === first + i;
-            panel(cv, t, x, y, 768, 94);
-            if (focused) cv.strokeRoundRect(x, y, 768, 94, 9, 2, blue);
-            const status = s.status === 'finished' ? 'SAVED' : 'INTERRUPTED';
+            const x = 24 + i % 2 * 784, y = top + 24 + Math.floor(i / 2) * rowHeight, focused = vm.focus === first + i;
+            panel(cv, t, x, y, 768, rowHeight - 12);
+            if (focused) cv.fillRect(x + 16, y + rowHeight - 15, 736, 3, blue);
+            const status = s.demo ? 'DEMO' : s.status === 'finished' ? 'SAVED' : 'INTERRUPTED';
             label(cv, s.name, x + 16, y + 40, 515, 25, t.text, { font: 'bold' });
-            label(cv, status, x + 750, y + 39, 200, 15, status === 'SAVED' ? blue : t.warn, { align: 'right' });
+            label(cv, status, x + 750, y + 39, 200, 15, status === 'INTERRUPTED' ? t.warn : blue, { align: 'right' });
             label(cv, V.date(s.startedAt), x + 16, y + 73, 395, 17, t.dim);
             label(cv, V.duration(s.stats.durationMs) + '  /  ' + (s.stats.speedMs ? amount(s.stats.distanceMiles) + ' mi' : '-- mi'), x + 750, y + 73, 340, 21, t.text, { align: 'right', font: 'num' });
         });
-        label(cv, 'Trips ' + (first + 1) + '-' + Math.min(first + 6, vm.history.length) + ' / ' + vm.history.length, 24, 92, 1552, 15, t.dim);
+        label(cv, 'Trips ' + (first + 1) + '-' + Math.min(first + 6, vm.history.length) + ' / ' + vm.history.length, 24, top + 15, 1552, 15, t.dim);
     }
-    const tail = vm.actions.slice(vm.history.length);
-    tail.forEach((a, i) => chip(cv, t, a, { x: 24 + i * 392, y: 428, w: 376, h: 52 }, vm.focus === vm.history.length + i));
 }
 function menu(cv, t, vm) {
+    const top = vm.contentTop, h = vm.contentBottom - top;
     vm.actions.forEach((action, i) => {
         const cols = vm.page === 'menu' ? 3 : 2, width = cols === 3 ? 506 : 768;
-        const x = 24 + i % cols * (width + 16), y = vm.page === 'menu' ? 126 : 102 + Math.floor(i / cols) * 160;
-        panel(cv, t, x, y, width, vm.page === 'menu' ? 246 : 145);
-        if (vm.focus === i) { cv.strokeRoundRect(x, y, width, vm.page === 'menu' ? 246 : 145, 9, 2, blue); cv.fillRect(x + 16, y + 24, 4, 30, red); }
-        label(cv, action.label, x + 26, y + (vm.page === 'menu' ? 100 : 65), width - 52, 34, action.enabled === false ? t.dim : t.text, { font: 'bold' });
-        label(cv, action.description || '', x + 26, y + (vm.page === 'menu' ? 153 : 103), width - 52, 19, t.dim);
+        const rows = Math.ceil(vm.actions.length / cols), height = (h - 12 * (rows - 1)) / rows;
+        const x = 24 + i % cols * (width + 16), y = top + Math.floor(i / cols) * (height + 12);
+        panel(cv, t, x, y, width, height);
+        if (vm.focus === i) cv.fillRect(x + 16, y + height - 3, width - 32, 3, blue);
+        label(cv, action.label, x + 26, y + height * 0.43, width - 52, 30, action.enabled === false ? t.dim : t.text, { font: 'bold' });
+        label(cv, action.description || '', x + 26, y + height * 0.43 + 40, width - 52, 19, t.dim);
     });
 }
 function edit(cv, t, vm) {
     const d = vm.draft, value = d[d.field], start = Math.max(0, d.caret - 43), shown = value.slice(start, d.caret) + '|' + value.slice(d.caret, d.caret + 40);
-    panel(cv, t, 24, 94, 1552, 98);
-    label(cv, d.field === 'name' ? 'TRIP NAME' : 'ANNOTATION', 42, 131, 260, 16, blue);
-    label(cv, shown || '|', 310, 144, 1230, 26, t.text);
-    label(cv, value.length + ' / ' + (d.field === 'name' ? 48 : 160) + ' characters', 42, 173, 1490, 15, t.dim);
-    vm.actions.forEach((action, i) => chip(cv, t, action, { x: 24 + i % 10 * 157, y: 207 + Math.floor(i / 10) * 55, w: 139, h: 43 }, vm.focus === i));
+    const top = vm.contentTop, h = vm.contentBottom - top, rows = Math.ceil(vm.actions.length / 10);
+    panel(cv, t, 24, top, 1552, 98);
+    label(cv, d.field === 'name' ? 'TRIP NAME' : 'ANNOTATION', 42, top + 31, 260, 16, blue);
+    label(cv, shown || '|', 310, top + 50, 1230, 26, t.text);
+    label(cv, value.length + ' / ' + (d.field === 'name' ? 48 : 160) + ' characters', 42, top + 79, 1490, 15, t.dim);
+    const rowHeight = (h - 110) / rows;
+    vm.actions.forEach((action, i) => chip(cv, t, action, { x: 24 + i % 10 * 157, y: top + 110 + Math.floor(i / 10) * rowHeight, w: 139, h: rowHeight - 8 }, vm.focus === i));
 }
 function modal(cv, t, vm) {
-    cv.fillRect(0, 38, W, H - 38, '#000000b8');
-    panel(cv, t, 350, 137, 900, 254, vm.modal.title);
-    label(cv, vm.modal.message, 380, 242, 840, 24, t.text);
-    label(cv, vm.notice || vm.modal.detail || 'This action affects only the selected saved trip.', 380, 278, 840, 18, vm.notice ? t.warn : t.dim);
-    vm.modal.actions.forEach((a, i) => chip(cv, t, a, { x: 380 + i * 438, y: 315, w: 410, h: 52 }, vm.modal.focus === i));
+    const top = vm.contentTop + (vm.contentBottom - vm.contentTop - 254) / 2;
+    cv.fillRect(0, vm.contentTop - 28, W, vm.contentBottom - vm.contentTop + 28, '#000000b8');
+    panel(cv, t, 350, top, 900, 254, vm.modal.title);
+    label(cv, vm.modal.message, 380, top + 105, 840, 24, t.text);
+    label(cv, vm.notice || vm.modal.detail || 'This action affects only the selected saved trip.', 380, top + 141, 840, 18, vm.notice ? t.warn : t.dim);
+    vm.modal.actions.forEach((a, i) => chip(cv, t, a, { x: 380 + i * 438, y: top + 178, w: 410, h: 52 }, vm.modal.focus === i));
 }
 function draw(ctx, vm) {
     const cv = ctx.canvas(W, H), t = ctx.theme();
@@ -297,13 +308,18 @@ function draw(ctx, vm) {
     const tabs = ['Trip', 'Elevation', 'Fuel', 'Gears', 'History'];
     const selected = ['trip', 'elevation', 'fuel', 'gears', 'history'].indexOf(vm.page);
     const badges = [];
-    if (vm.currentTrip) badges.push({ text: vm.currentTrip.status === 'recording' ? 'REC' : 'INTERRUPTED', color: vm.currentTrip.status === 'recording' ? red : t.warn });
+    if (vm.demo) badges.push({ text: 'DEMO', color: blue });
+    else if (vm.currentTrip) badges.push({ text: vm.currentTrip.status === 'recording' ? 'REC' : 'INTERRUPTED', color: vm.currentTrip.status === 'recording' ? red : t.warn });
     if (ctx.preview) badges.push({ text: 'PREVIEW', color: blue });
     G.frame(cv, t, tabs, selected, badges);
+    const full = cv.chrome && cv.place && cv.place.full;
+    const top = full ? (FULL.headH - cv.place.oy) / cv.place.scale + 8 : G.TOP;
+    const bottom = full ? (cv.place.h - FULL.barH - cv.place.oy) / cv.place.scale - 8 : H - FULL.barH - 8;
+    vm = Object.assign({}, vm, { contentTop: top + 28, contentBottom: bottom - (vm.notice ? 24 : 0) });
     const title = vm.page === 'history' ? 'Trip history' : vm.page === 'menu' ? 'Trip Data' : vm.page === 'edit' ? 'Edit saved trip' :
         vm.saved ? vm.trip.name + ' / ' + V.date(vm.trip.startedAt) : 'Current trip' + (vm.trip ? ' / ' + V.date(vm.trip.startedAt) : '');
-    label(cv, title, 24, 74, 1320, 24, t.text);
-    label(cv, vm.busy ? 'Working...' : vm.page === 'trip' && vm.trip ? (vm.saved && vm.trip.status !== 'finished' ? 'INTERRUPTED' : vm.trip.status.toUpperCase()) : 'M850i / US', RIGHT, 73, 280, 17, t.dim, { align: 'right' });
+    label(cv, title, 24, top + 18, 1230, 17, t.dim);
+    label(cv, vm.busy ? 'Working...' : vm.demo ? 'DEMO / MEMORY ONLY' : vm.page === 'trip' && vm.trip ? (vm.saved && vm.trip.status !== 'finished' ? 'INTERRUPTED' : vm.trip.status.toUpperCase()) : 'M850i / US', RIGHT, top + 18, 280, 16, t.dim, { align: 'right' });
     if (vm.page === 'trip') trip(cv, t, vm);
     else if (vm.page === 'elevation') elevation(cv, t, vm);
     else if (vm.page === 'fuel') fuel(cv, t, vm);
@@ -311,7 +327,8 @@ function draw(ctx, vm) {
     else if (vm.page === 'history') history(cv, t, vm);
     else if (vm.page === 'menu' || vm.page === 'actions') menu(cv, t, vm);
     else if (vm.page === 'edit') edit(cv, t, vm);
-    label(cv, vm.notice || 'Turn to select / press to open / left tilt or Back to return', 24, 509, 1552, 17, vm.notice ? t.warn : t.dim);
+    if (vm.notice) label(cv, vm.notice, 24, bottom - 4, 1552, 16, t.warn);
+    actions(cv, t, vm);
     if (vm.modal) modal(cv, t, vm);
     return cv;
 }

@@ -3,53 +3,56 @@
 const I = require('./instruments');
 const C = I.C;
 
-// Keep source leads and sensor locations separate; none establishes a safe range.
-// Units, current values and observation extrema are owned by the plot helper.
+// Keep physical sensor identities separate; unvalidated channels remain unavailable.
+// Blue-family trace colors share the same palette as the driving and health pages.
 const groups = [
     {
         box: { x: 24, w: 770 },
-        options: { title: 'ENGINE / OIL & COOLANT' },
+        options: {},
         series: [
-            { id: 'oil', label: 'Engine oil', color: C.amber },
-            { id: 'coolant', label: 'Coolant / water', color: C.blue },
+            { id: 'oil', label: 'Engine oil', color: C.series[0] },
+            { id: 'coolant', label: 'Coolant', color: C.series[1] },
         ],
     },
     {
         box: { x: 806, w: 770 },
-        options: { title: 'DRIVELINE / DISTINCT SOURCE LEADS' },
+        options: {},
         series: [
-            { id: 'transmission1', label: 'Oil 1 / BasicDataSet', color: C.purple },
-            { id: 'transmission2', label: 'Oil 2 / EGS', color: C.cyan },
-            { id: 'converter', label: 'Torque converter', color: C.amber },
+            { id: 'transmission1', label: 'Trans oil 1', color: C.series[0] },
+            { id: 'transmission2', label: 'Trans oil 2', color: C.series[1] },
+            { id: 'converter', label: 'Converter', color: C.series[2] },
         ],
     },
     {
         box: { x: 24, w: 770 },
-        options: { title: 'AIR / SENSOR LOCATIONS' },
+        options: {},
         series: [
-            { id: 'iat', label: 'Intake air / IAT', color: C.amber },
-            { id: 'outside', label: 'Outside air', color: C.blue },
-            { id: 'chargeAir', label: 'Charge air', color: C.purple },
-            { id: 'cabin', label: 'Cabin air', color: C.cyan },
+            { id: 'iatBank1', label: 'IAT bank 1', color: C.series[0] },
+            { id: 'iatBank2', label: 'IAT bank 2', color: C.series[1] },
+            { id: 'outside', label: 'Outside', color: C.series[2] },
+            { id: 'chargeAir', label: 'Charge air', color: C.series[3] },
+            { id: 'cabin', label: 'Cabin air', color: C.series[0] },
         ],
     },
     {
         box: { x: 806, w: 770 },
-        options: { title: 'TYRES / REPORTED WHEEL POSITIONS' },
+        options: {},
         series: [
-            { id: 'tyreTempFLH', label: 'Front left', color: C.blue },
-            { id: 'tyreTempFRH', label: 'Front right', color: C.cyan },
-            { id: 'tyreTempRLH', label: 'Rear left', color: C.amber },
-            { id: 'tyreTempRRH', label: 'Rear right', color: C.purple },
+            { id: 'oilPressure', label: 'Oil pressure', color: C.series[0] },
+            { id: 'transmissionPressure', label: 'Trans pressure', color: C.series[1] },
+            { id: 'fuelLowActual', label: 'Fuel supply', color: C.series[2] },
         ],
     },
 ];
 
 module.exports = function temperatures(cv, t, vm) {
+    const top = Number.isFinite(vm.contentTop) ? vm.contentTop : 44;
     const bottom = Number.isFinite(vm.contentBottom) ? vm.contentBottom : 452;
-    const height = (bottom - 44 - 12) / 2;
+    const height = (bottom - top - 10) / 2;
     groups.forEach((group, index) => {
-        group.box.y = 44 + Math.floor(index / 2) * (height + 12);
+        group.box.x = index % 2 ? 806 : 16;
+        group.box.w = 778;
+        group.box.y = top + Math.floor(index / 2) * (height + 10);
         group.box.h = height;
         I.plot(cv, t, vm, group.box, group.series, group.options);
         // Small trace-colour tabs echo the M Vitals headings without another panel.

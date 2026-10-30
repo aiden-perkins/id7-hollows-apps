@@ -9,7 +9,7 @@ import sys
 import tempfile
 
 sys.dont_write_bytecode = True
-LOCAL_APPS = {'mgu_lab', 'lighting_lab', 'xdrive_lab', 'touchscreen_lab', 'ambient_lighting', 'live_data_viewer', 'trip_data'}
+LOCAL_APPS = {'mgu_lab', 'lighting_lab', 'xdrive_lab', 'touchscreen_lab', 'ambient_lighting', 'live_data_viewer', 'trip_data', 'other_data_lab'}
 
 
 def load_tool(upstream, name):

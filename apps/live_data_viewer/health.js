@@ -2,32 +2,34 @@
 const I = require('./instruments');
 const { C, text, get, numeric, fmt, ink, plot } = I;
 
-const oilSeries = [{ id: 'oilPressure', label: 'Actual', color: C.amber }];
+const oilSeries = [{ id: 'oilPressure', label: 'Actual', color: C.blue }];
 const highSeries = [
-    { id: 'fuelHighActual', label: 'Actual', color: C.cyan },
-    { id: 'fuelHighTarget', label: 'Target', color: C.purple },
+    { id: 'fuelHighActual', label: 'Actual', color: C.blue },
+    { id: 'fuelHighTarget', label: 'Target', color: C.cyan },
 ];
 const lowSeries = [
-    { id: 'fuelLowActual', label: 'Actual', color: C.cyan },
-    { id: 'fuelLowTarget', label: 'Target', color: C.purple },
+    { id: 'fuelLowActual', label: 'Actual', color: C.blue },
+    { id: 'fuelLowTarget', label: 'Target', color: C.cyan },
 ];
-const rows = [
-    { prefix: 'timingCorrection', label: 'TIMING |CORR|', detail: 'Max absolute / deg', color: C.blue, magnitude: true, places: 1 },
-    { prefix: 'knock', label: 'KNOCK MAX', detail: 'Quantity / units unknown', color: C.purple, places: 1 },
-    { prefix: 'misfire', label: 'MISFIRE MAX', detail: 'Count / period unverified', color: C.cyan, places: 0 },
+const metrics = [
+    { prefix: 'timingCorrection', label: 'TIM deg', magnitude: true, places: 1, color: C.blue },
+    { prefix: 'misfire', label: 'MISS', places: 0, color: C.cyan },
+    { prefix: 'knock', label: 'KNOCK', places: 1, color: C.series[2] },
 ];
+// Requested display numbering only; these positions do not establish physical/DME mapping.
+const cylinders = [[5, 1], [6, 2], [7, 3], [8, 4]];
 
-function observation(vm, row, cylinder) {
-    const id = row.prefix + cylinder, state = get(vm, id), current = numeric(vm, id);
+function observation(vm, metric, cylinder) {
+    const id = metric.prefix + cylinder, state = get(vm, id), current = numeric(vm, id);
     const reading = vm.model.readings[id];
-    // Model extrema contain validated numeric samples only, and reset with the observation session.
+    // Extrema contain validated numeric samples only and reset with the observation session.
     const min = reading.min, max = reading.max;
     let peak = Number.isFinite(max) ? max : null;
-    if (row.magnitude) {
+    if (metric.magnitude) {
         peak = Number.isFinite(min) || Number.isFinite(max) ?
             Math.max(Number.isFinite(min) ? Math.abs(min) : 0, Number.isFinite(max) ? Math.abs(max) : 0) : null;
     }
-    return { id, state, current, peak };
+    return { state, current, peak };
 }
 
 function availability(state) {
@@ -35,79 +37,139 @@ function availability(state) {
     return state.state === 'live' ? '' : String(state.state || 'unknown').toUpperCase();
 }
 
-function comparisonCell(cv, t, vm, row, item, x, y, h, scale, worst) {
-    const w = 102, n = item.current, peak = item.peak;
-    const c = ink(t, item.state, row.color);
-    const peakColor = item.state.state === 'live' && !item.state.retained ? row.color : C.amber;
-    cv.roundRect(x, y, w, h, 5, t.panelTop);
-    if (peak !== null && peak > 0 && peak === worst) {
-        // Bright outline means largest observed value in this row, never a fault threshold.
-        cv.strokeRoundRect(x + 1, y + 1, w - 2, h - 2, 5, 1, peakColor);
-        cv.circle(x + w - 10, y + 10, 2.5, peakColor);
-    }
-    
-    text(cv, peak === null ? '--' : fmt(peak, row.places), x + 9, y + h * 0.32, w - 20, 30,
-        peak === null ? t.dim : peakColor, { font: 'num' });
-    text(cv, n === null ? 'NOW --' : 'NOW ' + fmt(n, row.places), x + 9, y + h * 0.56, w - 16, 16, c, { font: 'num' });
-    const left = x + 9, right = x + w - 9, barY = y + h * 0.72, width = right - left;
-    cv.line(left, barY, right, barY, 5, t.track);
-    if (scale !== null && scale > 0) {
-        const magnitude = row.magnitude && n !== null ? Math.abs(n) : n;
-        if (magnitude !== null) {
-            const fill = Math.max(0, Math.min(1, magnitude / scale));
-            if (fill > 0) cv.line(left, barY, left + width * fill, barY, 5, c);
+function counterTotal(vm, metric) {
+    let total = 0, period = null, fresh = 0, held = false, stale = false;
+    for (let cylinder = 1; cylinder <= 8; cylinder++) {
+        const id = metric.prefix + cylinder, d = vm.model.definitions[id], state = get(vm, id);
+        if (!d.source) return { value: null, status: 'UNMAPPED', detail: 'C1-C8 source required' };
+        if (!d.numeric || d.decoder === 'unscaled' || d.unit !== 'count') {
+            return { value: null, status: 'COUNT UNCONFIRMED', detail: 'Validated counts required' };
         }
-        if (peak !== null) {
-            const marker = left + width * Math.max(0, Math.min(1, peak / scale));
-            cv.line(marker, barY - 5, marker, barY + 5, 2, peakColor);
+        if (typeof d.counterPeriod !== 'string' || !d.counterPeriod.trim()) {
+            return { value: null, status: 'PERIOD UNKNOWN', detail: 'Shared window required' };
         }
-    } else if (peak === 0) {
-        cv.line(left, barY - 5, left, barY + 5, 2, peakColor);
+        if (period !== null && period !== d.counterPeriod) {
+            return { value: null, status: 'PERIOD MISMATCH', detail: 'Different counter windows' };
+        }
+        period = d.counterPeriod;
+        held = held || !!state.retained;
+        stale = stale || state.state === 'stale';
+        if (state.state !== 'live' || state.retained) continue;
+        if (state.unit !== 'count') {
+            return { value: null, status: 'UNITS UNCONFIRMED', detail: 'Count readings required' };
+        }
+        if (!Number.isSafeInteger(state.value) || state.value < 0) {
+            return { value: null, status: 'INVALID COUNT', detail: 'Nonnegative integer only' };
+        }
+        fresh++;
+        total += state.value;
     }
-    if (peak === null && n === null) {
-        cv.line(x + w / 2 - 3, barY - 3, x + w / 2 + 3, barY + 3, 1, t.dim);
-        cv.line(x + w / 2 - 3, barY + 3, x + w / 2 + 3, barY - 3, 1, t.dim);
+    if (fresh !== 8) {
+        return { value: null, status: 'PARTIAL ' + fresh + '/8 FRESH',
+            detail: held ? (stale ? 'STALE / HELD' : 'HELD READINGS') : stale ? 'STALE COVERAGE' : 'WAITING / UNKNOWN',
+            held: held || stale };
     }
-    text(cv, availability(item.state), x + w / 2, y + h - 8, w - 8, 12, c, { align: 'center' });
+    if (!Number.isSafeInteger(total)) return { value: null, status: 'COUNT RANGE', detail: 'Exact total unavailable' };
+    return { value: total, status: '8/8 FRESH', detail: 'Same counter period' };
 }
 
-function cylinderRow(cv, t, vm, row, y, height) {
-    const items = [];
-    let worst = null;
+function timingMaximum(vm) {
+    let maximum = null, covered = 0, fresh = 0, held = false, stale = false;
     for (let cylinder = 1; cylinder <= 8; cylinder++) {
-        const item = observation(vm, row, cylinder);
-        items.push(item);
-        if (item.peak !== null) worst = worst === null ? item.peak : Math.max(worst, item.peak);
+        const id = 'timingCorrection' + cylinder, d = vm.model.definitions[id], item = observation(vm, metrics[0], cylinder);
+        held = held || !!item.state.retained;
+        stale = stale || item.state.state === 'stale';
+        if (!d.source || !d.numeric || d.decoder === 'unscaled' || d.unit !== 'deg' || item.peak === null) continue;
+        covered++;
+        maximum = maximum === null ? item.peak : Math.max(maximum, item.peak);
+        if (item.state.state === 'live' && !item.state.retained && item.state.unit === 'deg') fresh++;
     }
-    // Auto-range is a comparison reference: 15% headroom, with no acceptable/unsafe band.
-    const scale = worst !== null ? worst > 0 ? worst * 1.15 : 0 : null;
-    text(cv, row.label, 528, y + height * 0.29, 166, 17, row.color, { font: 'bold' });
-    text(cv, row.detail, 528, y + height * 0.53, 166, 13, t.dim);
-    text(cv, scale === null ? 'Scale: no samples' : scale === 0 ? 'Observed zero / no range' :
-        '0-' + fmt(scale, row.places === 0 ? 1 : row.places) + ' / +15%', 528, y + height * 0.79, 166, 13, t.dim, { font: 'num' });
-    items.forEach((item, i) => comparisonCell(cv, t, vm, row, item, 708 + i * 106, y, height, scale, worst));
+    if (!covered) return { value: null, status: 'UNKNOWN', detail: 'No eligible session data' };
+    return { value: maximum,
+        status: covered < 8 ? 'PARTIAL ' + covered + '/8 SESSION' : '8/8 SESSION',
+        detail: (stale ? 'STALE / ' : held || fresh < covered ? 'HELD / ' : '') + fresh + '/8 FRESH',
+        held: held || stale || covered < 8 || fresh < 8 };
+}
+
+function aggregateCard(cv, t, x, y, w, h, label, metric, result, detail) {
+    cv.roundRect(x, y, w, h, 8, t.panelBottom);
+    cv.line(x + 12, y + 11, x + 34, y + 11, 3, metric.color);
+    text(cv, label, x + 12, y + 31, w - 24, 12, metric.color, { font: 'bold' });
+    const color = result.held ? C.amber : result.value === null ? t.dim : metric.color;
+    text(cv, result.value === null ? '--' : fmt(result.value, metric.magnitude ? metric.places : 0),
+        x + 12, y + h * 0.57, w - 24, 29, color, { font: 'num' });
+    text(cv, result.status, x + 12, y + h - 34, w - 24, 10, color, { font: 'bold' });
+    text(cv, result.detail, x + 12, y + h - 20, w - 24, 10, t.dim);
+    if (detail) text(cv, detail, x + 12, y + h - 7, w - 24, 9, t.dim);
+}
+
+function aggregateColumn(cv, t, vm, x, y, w, h) {
+    const gap = 8, cardHeight = (h - 2 * gap) / 3;
+    aggregateCard(cv, t, x, y, w, cardHeight, 'TOTAL MISFIRES', metrics[1], counterTotal(vm, metrics[1]));
+    aggregateCard(cv, t, x, y + cardHeight + gap, w, cardHeight,
+        'TOTAL KNOCKS', metrics[2], counterTotal(vm, metrics[2]));
+    aggregateCard(cv, t, x, y + 2 * (cardHeight + gap), w, cardHeight,
+        'MAX TIMING CORR.', metrics[0], timingMaximum(vm), 'Session maximum |deg|');
+}
+
+function metricCenter(x, w, index) {
+    return x + 52 + (w - 64) * (index + 0.5) / metrics.length;
+}
+
+function cylinderCell(cv, t, vm, cylinder, x, y, w, h) {
+    cv.roundRect(x, y, w, h, 6, t.panelTop);
+    text(cv, 'C' + cylinder, x + 26, y + h / 2 + 10, 48, 28, t.text,
+        { align: 'center', font: 'bold' });
+    const columnWidth = (w - 64) / metrics.length;
+    metrics.forEach((metric, index) => {
+        const item = observation(vm, metric, cylinder), cx = metricCenter(x, w, index);
+        const color = ink(t, item.state, metric.color);
+        text(cv, item.current === null ? '--' : fmt(item.current, metric.places),
+            cx, y + h * 0.40, columnWidth - 4, 18, color, { align: 'center', font: 'num' });
+        text(cv, item.peak === null ? '--' : fmt(item.peak, metric.places),
+            cx, y + h * 0.70, columnWidth - 4, 15, item.peak === null ? t.dim : color,
+            { align: 'center', font: 'num' });
+        text(cv, availability(item.state), cx, y + h - 8, columnWidth - 4, 8, color,
+            { align: 'center' });
+    });
+}
+
+function cylinderGrid(cv, t, vm, x, y, w, h) {
+    cv.roundRect(x, y, w, h, 8, t.panelBottom);
+    text(cv, 'CYLINDER HEALTH', x + 12, y + 22, 175, 14, t.text, { font: 'bold' });
+    text(cv, 'NOW / SESSION PEAK', x + w - 12, y + 21, w - 210, 10, t.dim,
+        { align: 'right' });
+    const gap = 8, headerHeight = 54, cellWidth = (w - 24 - gap) / 2;
+    const cellHeight = (h - headerHeight - 12 - 3 * gap) / 4;
+    for (let column = 0; column < 2; column++) {
+        const cellX = x + 12 + column * (cellWidth + gap);
+        metrics.forEach((metric, index) => text(cv, metric.label,
+            metricCenter(cellX, cellWidth, index), y + 44, (cellWidth - 64) / metrics.length - 4,
+            10, metric.color, { align: 'center', font: 'bold' }));
+    }
+    cylinders.forEach((pair, row) => {
+        pair.forEach((cylinder, column) => {
+            cylinderCell(cv, t, vm, cylinder,
+                x + 12 + column * (cellWidth + gap), y + headerHeight + row * (cellHeight + gap),
+                cellWidth, cellHeight);
+        });
+    });
 }
 
 module.exports = function(cv, t, vm) {
+    const top = Number.isFinite(vm.contentTop) ? vm.contentTop : 44;
     const bottom = Number.isFinite(vm.contentBottom) ? vm.contentBottom : 452;
-    const height = bottom - 44, plotHeight = (height - 20) / 3;
-    plot(cv, t, vm, { x: 24, y: 44, w: 476, h: plotHeight }, oilSeries,
-        { title: 'OIL PRESSURE', unit: '' });
-    plot(cv, t, vm, { x: 24, y: 44 + plotHeight + 10, w: 476, h: plotHeight }, highSeries,
-        { title: 'HIGH-PRESSURE FUEL', unit: '' });
-    plot(cv, t, vm, { x: 24, y: 44 + 2 * (plotHeight + 10), w: 476, h: plotHeight }, lowSeries,
-        { title: 'LOW-PRESSURE FUEL', unit: '' });
-
-    cv.roundRect(512, 44, 1064, height, 8, t.panelBottom);
-    text(cv, 'CYLINDER COMPARISON / OBSERVATION PEAKS', 528, 72, 1028, 22, t.text, { font: 'bold' });
-    text(cv, 'Bar = current magnitude   | = session peak   Outline = row maximum', 528, 96, 1028, 15, t.dim);
-    for (let cylinder = 1; cylinder <= 8; cylinder++) {
-        text(cv, 'C' + cylinder, 759 + (cylinder - 1) * 106, 126, 96, 20, t.text, { align: 'center', font: 'bold' });
-    }
-    const rowHeight = (bottom - 140 - 52 - 16) / 3;
-    rows.forEach((row, index) => cylinderRow(cv, t, vm, row, 140 + index * (rowHeight + 8), rowHeight));
-    text(cv, 'No validated C1-C8 sources: correction calibration, both-DME coverage and physical mapping unconfirmed.',
-        528, bottom - 30, 1028, 14, t.dim);
-    text(cv, 'Peaks since app start / not ECU trip totals. Count periods unverified. Auto-scales are display references, not tuner limits.',
-        528, bottom - 10, 1028, 13, t.dim);
+    const height = bottom - top, plotTop = top + 26, plotHeight = (height - 46) / 3;
+    cv.line(40, top + 11, 59, top + 11, 3, C.blue);
+    text(cv, 'Actual', 67, top + 16, 78, 13, t.text);
+    cv.line(154, top + 11, 173, top + 11, 3, C.cyan);
+    text(cv, 'Target', 181, top + 16, 78, 13, t.text);
+    plot(cv, t, vm, { x: 24, y: plotTop, w: 800, h: plotHeight }, oilSeries,
+        { title: 'OIL PRESSURE', unit: '', compactLegend: true, sessionExtrema: false });
+    plot(cv, t, vm, { x: 24, y: plotTop + plotHeight + 10, w: 800, h: plotHeight }, highSeries,
+        { title: 'HIGH-PRESSURE FUEL', unit: '', compactLegend: true, sessionExtrema: false });
+    plot(cv, t, vm, { x: 24, y: plotTop + 2 * (plotHeight + 10), w: 800, h: plotHeight }, lowSeries,
+        { title: 'LOW-PRESSURE FUEL', unit: '', compactLegend: true, sessionExtrema: false });
+    cylinderGrid(cv, t, vm, 836, top, 548, height);
+    aggregateColumn(cv, t, vm, 1396, top, 180, height);
 };

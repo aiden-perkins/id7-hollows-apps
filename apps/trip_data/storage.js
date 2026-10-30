@@ -35,7 +35,8 @@ class Storage {
                 ![5, 10, 20].includes(s.altitudeThresholdFt) || !Array.isArray(s.speedBands) || (s.speedBands.length < 1 || s.speedBands.length > 64) ||
                 !s.speedBands.every((v, i) => Number.isFinite(v) && v > 1 && v <= 250 && (!i || v > s.speedBands[i - 1]))) throw new Error('Unsupported or invalid settings');
             // Apply the requested bands to future recordings; saved trip policies remain immutable.
-            return Object.assign({}, s, { speedBands: defaults.speedBands.slice() });
+            return Object.assign(defaults, { sampleMs: s.sampleMs, automatic: s.automatic,
+                altitudeThresholdFt: s.altitudeThresholdFt, smoothing: s.smoothing });
         } catch (e) {
             if (e.code !== 'ENOENT') { this.settingsBlocked = true; this.errors.push('Settings preserved: ' + e.message); }
             return defaults;
@@ -43,7 +44,10 @@ class Storage {
     }
     saveSettings(value) {
         if (this.settingsBlocked) throw new Error('Saved settings are malformed or unsupported and have been preserved');
-        atomic(path.join(this.dir, 'settings.json'), value);
+        const file = path.join(this.dir, 'settings.json');
+        let saved = {};
+        try { saved = JSON.parse(fs.readFileSync(file, 'utf8')); } catch (e) { if (e.code !== 'ENOENT') throw e; }
+        atomic(file, Object.assign({}, saved, value));
     }
     directory(id) {
         if (!validId(id)) throw new Error('Invalid trip ID');

@@ -5,6 +5,7 @@ const { Storage } = require('./storage');
 const { Model } = require('./model');
 const { Services } = require('./services');
 const V = require('./view');
+const Demo = require('./demo');
 
 mgu.run({
     async start(ctx) {
@@ -12,14 +13,18 @@ mgu.run({
         let closed = false, loop = null, dirty = true, immediate = true, lastDraw = 0;
         let grabbed = false, rawPosition = null, rawPressed = false, rawDeflection = 0, relayAt = -Infinity, lastSelect = -Infinity;
         let controllerWatch = null, activeKey = '';
-        const state = { page: 'driving', focus: 0, notice: '', noticeUntil: 0 };
+        const state = { page: ctx.settings.get('section') || 'driving', focus: 0, notice: '', noticeUntil: 0 };
         const changed = () => { dirty = true; if (loop) loop.kick(); };
-        const model = new Model(storage, changed), services = new Services(ctx, model);
+        const model = new Model(storage, changed);
+        Object.assign(ctx.settings.values, model.settings);
+        let demo = ctx.settings.get('demo') === 'on' ? new Demo(model.settings) : null;
+        let services = demo ? null : new Services(ctx, model);
         const shown = () => ui.isVisible('MAIN') && (!ui.hasFocus || ui.hasFocus('MAIN'));
         const tell = (message) => { state.notice = message; state.noticeUntil = Date.now() + 8000; immediate = true; changed(); };
         const action = (id, label, run) => ({ id, label, run });
-        const pageDefs = (page) => D.definitions.filter((d) => d.page === page || page === 'temperatures' && d.id.indexOf('tyreTemp') === 0);
+        const pageDefs = (page) => D.definitions.filter((d) => d.page === page || d.pages && d.pages.includes(page));
         function collect(force) {
+            if (!services) return;
             const ids = shown() ? pageDefs(state.page).map((d) => d.id) : [];
             const key = ids.join(',');
             if (force || key !== activeKey) { activeKey = key; services.activate(ids, force); }
@@ -60,12 +65,14 @@ mgu.run({
         const labels = {};
         function nativeText(id, text) { if (labels[id] !== text) { labels[id] = text; ui.text(id, text); } }
         function refreshSettings() {
-            nativeText('PREF_FIXED', 'US units / rounded dashboard readings. IDs and labels retain natural formats.');
+            nativeText('PREF_FIXED', 'US units / fuel to three decimals. IDs and labels retain natural formats.');
+            nativeText('PREF_DEMO', 'Demo data: ' + (demo ? 'on / simulated' : 'off'));
             nativeText('PREF_TREND', 'Recent graph window: ' + model.settings.trendSeconds + ' seconds');
-            nativeText('PREF_RATE', 'Display / getter refresh preference: ' + model.settings.refreshMs + ' ms');
+            nativeText('PREF_RATE', 'Other getter refresh: ' + model.settings.refreshMs + ' ms / display up to 60 FPS');
             nativeText('PREF_ORDER', 'Category order: ' + model.settings.order.map((id) => V.titles[id]).join(', '));
-            nativeText('PREF_NOTES', 'Only the visible category is collected. TPMS getters have a five-second minimum. Graphs retain up to ten minutes / 1,201 points. Ignition is unconfirmed; extrema cover this observation session and are not retained across restarts.');
-            nativeText('PREF_NOTICE', storage.error || state.noticeUntil > Date.now() && state.notice || '');
+            nativeText('PREF_NOTES', 'New samples render independently of getter refresh, up to 60 FPS with renderer backpressure. Pedal reads request 50 ms after each reply; actual rate depends on the ECU and shared diagnostic transport. Fuel: 5 seconds; battery: 2 seconds; TPMS: at least 5 seconds. Min/max cover this app session. Native accelerator raw-to-percent, kickdown and per-bank IAT sources remain unvalidated.');
+            nativeText('PREF_NOTICE', storage.error || state.noticeUntil > Date.now() && state.notice ||
+                (demo ? 'SIMULATED DATA. Demo values and metadata are separate from live vehicle readings.' : ''));
         }
         const bind = (id, fn) => ui.onClick(id, async () => {
             if (closed) return;
@@ -73,16 +80,36 @@ mgu.run({
             if (ui.isVisible('PREFERENCES')) refreshSettings();
             immediate = true; changed();
         });
+        function configure(key, value) {
+            model.configure(key, value);
+            Object.assign(ctx.settings.values, model.settings);
+            if (demo) demo.settings = model.settings;
+        }
+        bind('PREF_DEMO', () => ctx.settings.set('demo', demo ? 'off' : 'on'));
+        ctx.settings.onChange((key) => {
+            if (closed || key !== 'demo') return;
+            const enabled = ctx.settings.get('demo') === 'on';
+            if (enabled === !!demo) return;
+            if (services) { services.close(); services = null; model.activate([]); }
+            demo = enabled ? new Demo(model.settings) : null;
+            if (!demo) services = new Services(ctx, model);
+            activeKey = ''; collect(true); refreshSettings(); immediate = true; changed();
+        });
+        if (ctx.onTab) ctx.onTab((index) => {
+            if (closed || !model.settings.order[index]) return;
+            state.page = model.settings.order[index];
+            collect(); immediate = true; changed();
+        });
         bind('PREF_TREND', () => {
             const options = [60, 180, 600];
-            model.configure('trendSeconds', options[(options.indexOf(model.settings.trendSeconds) + 1) % options.length]);
+            configure('trendSeconds', options[(options.indexOf(model.settings.trendSeconds) + 1) % options.length]);
         });
         bind('PREF_RATE', () => {
-            const options = [500, 1000, 2000];
-            model.configure('refreshMs', options[(options.indexOf(model.settings.refreshMs) + 1) % options.length]);
+            const options = [100, 250, 500, 1000, 2000];
+            configure('refreshMs', options[(options.indexOf(model.settings.refreshMs) + 1) % options.length]);
         });
         bind('PREF_ORDER', () => {
-            const next = model.settings.order.slice(); next.push(next.shift()); model.configure('order', next);
+            const next = model.settings.order.slice(); next.push(next.shift()); configure('order', next);
         });
         bind('PREF_HOME', () => ui.open('MAIN'));
         async function raw(v) {
@@ -126,21 +153,22 @@ mgu.run({
             closed = true;
             if (ctx.controller) ctx.controller.grab(false);
             if (loop) loop.stop();
-            services.close();
+            if (services) services.close();
             if (controllerWatch && controllerWatch.shutdown) Promise.resolve(controllerWatch.shutdown()).catch((e) => ctx.log.warn(e));
         };
         if (ctx.app && ctx.app.on) ctx.app.on('shutdown', close);
         process.once('exit', close);
-        loop = ctx.loop('MAIN', 8, async () => {
+        loop = ctx.loop('MAIN', 60, async () => {
             if (closed) return;
             syncController(); collect();
             const now = Date.now();
-            if (!immediate && now - lastDraw < model.settings.refreshMs) return;
-            if (!dirty && now - lastDraw < 1000) return;
+            if (!immediate && now - lastDraw < 1000 / 60) return;
+            if (!demo && !dirty && now - lastDraw < 1000) return;
+            if (demo) demo.advance(now);
             dirty = false; immediate = false; lastDraw = now;
-            await ui.image('MAIN_GFX', V.draw(ctx, Object.assign({}, state, { model, actions,
+            await ui.image('MAIN_GFX', V.draw(ctx, Object.assign({}, state, { model: demo || model, actions, demo: !!demo,
                 focused: actions[state.focus].id,
-                notice: storage.error || (state.noticeUntil > now ? state.notice : '') })));
+                notice: storage.error || (state.noticeUntil > now ? state.notice : '') || (demo ? 'SIMULATED DATA' : '') })));
         });
         refreshSettings(); syncController(); collect(); changed();
     },

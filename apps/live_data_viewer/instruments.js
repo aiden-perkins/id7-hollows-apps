@@ -1,8 +1,6 @@
 'use strict';
-const D = require('./definitions');
-const C = { blue: '#81c4ff', cyan: '#50dfd4', green: '#74df9b', amber: '#ffbd69', red: '#ff565c', purple: '#b6a1ff' };
-const defs = {};
-D.definitions.forEach((d) => { defs[d.id] = d; });
+const C = { blue: '#81c4ff', cyan: '#4e9fdf', amber: '#ffbd69', red: '#ff565c',
+    series: ['#81c4ff', '#4e9fdf', '#b6ddff', '#5d82a8'] };
 function text(cv, str, x, y, width, size, color, options) {
     let s = String(str == null ? '' : str);
     const opts = options || {};
@@ -12,11 +10,11 @@ function text(cv, str, x, y, width, size, color, options) {
     }
     cv.text(s, x, y, size, color, opts);
 }
-function get(vm, id) { return vm.model.state(defs[id]); }
+function get(vm, id) { return vm.model.state(vm.model.definitions[id]); }
 function calibrated(d) { return d.numeric && d.decoder !== 'unscaled' && !/^raw\b/i.test(d.unit || ''); }
 function numeric(vm, id) {
     const s = get(vm, id);
-    return calibrated(defs[id]) && (s.state === 'live' || s.retained) && Number.isFinite(s.value) ? s.value : null;
+    return calibrated(vm.model.definitions[id]) && (s.state === 'live' || s.retained) && Number.isFinite(s.value) ? s.value : null;
 }
 function fmt(n, places) { return Number.isFinite(n) ? n.toFixed(places === undefined ? 1 : places) : '--'; }
 function ink(t, s, normal) {
@@ -26,30 +24,32 @@ function thermalColor(id, n, unit, normal) {
     if (!Number.isFinite(n) || !/^(°?F|°?C|deg F|deg C)$/.test(unit || '')) return normal;
     const c = /F/.test(unit) ? (n - 32) * 5 / 9 : n;
     const thresholds = { oil: [70, 120, 130], coolant: [60, 105, 112], transmission1: [50, 110, 120],
-        transmission2: [50, 110, 120], converter: [50, 110, 120], iat: [-100, 50, 65], chargeAir: [-100, 50, 65] };
+        transmission2: [50, 110, 120], converter: [50, 110, 120], iatBank1: [-100, 50, 65], iatBank2: [-100, 50, 65], chargeAir: [-100, 50, 65] };
     const r = thresholds[id];
     return r ? c >= r[2] ? C.red : c >= r[1] ? C.amber : c < r[0] ? C.blue : normal : normal;
 }
-// OBS rulers are session-wide; hollow trace markers identify actual rolling-window extrema.
+// Session min/max rulers and rolling-window extrema are distinct observations.
 function plot(cv, t, vm, box, series, options) {
     const o = options || {}, x = box.x, y = box.y, w = box.w, h = box.h;
-    const compact = h < 130;
+    const compact = h < 130, sidebar = !o.compactLegend, session = o.sessionExtrema !== false;
     cv.roundRect(x, y, w, h, 8, t.panelBottom);
     cv.line(x + 14, y + 1, x + w - 14, y + 1, 1, t.panelEdge);
-    text(cv, o.title || '', x + 16, y + 22, w - 142, 18, t.text, { font: 'bold' });
+    const header = !!o.title || !sidebar;
+    if (o.title) text(cv, o.title, x + 14, y + 21, w - 100, 17, t.text, { font: 'bold' });
     const seconds = vm.model.settings.trendSeconds, now = Date.now(), start = now - seconds * 1000;
-    text(cv, seconds + 's WIN', x + w - 16, y + 22, 94, 13, t.dim, { align: 'right' });
-    const legend = Math.min(344, w * 0.48);
-    const left = x + legend + 48, top = y + 44, width = w - legend - 64, height = h - 72;
-    const traceWidth = Math.max(16, width - Math.max(40, 18 + series.length * 9));
+    text(cv, seconds + 's', x + w - 14, y + (header ? 21 : h - 9), 70, 12, t.dim, { align: 'right' });
+    const legend = sidebar ? Math.min(196, w * 0.32) : 0;
+    const left = x + legend + 42, top = y + (header ? 35 : 25), width = w - legend - 58, height = h - (header ? 60 : 50);
+    const traceWidth = Math.max(16, width - (session ? Math.max(64, 20 + series.length * 10) : 0));
     let low = Infinity, high = -Infinity, hasPoints = false, hasSession = false;
+    const defs = vm.model.definitions;
     const requestedUnit = o.unit || series.map((s) => calibrated(defs[s.id]) && defs[s.id].unit).find(Boolean) || '';
     const unit = /^raw\b/i.test(requestedUnit) ? '' : requestedUnit;
     const observations = series.map((s) => {
         const d = defs[s.id], r = vm.model.readings[s.id];
         const observation = { minimum: null, maximum: null };
         if (!calibrated(d) || unit && d.unit !== unit) return observation;
-        [r.min, r.max].forEach((n) => {
+        (session ? [r.min, r.max] : []).forEach((n) => {
             if (!Number.isFinite(n)) return;
             low = Math.min(low, n); high = Math.max(high, n); hasSession = true;
         });
@@ -77,32 +77,42 @@ function plot(cv, t, vm, box, series, options) {
         if (hasDomain) text(cv, fmt(high - (high - low) * i / 2, 0), left - 6, gy + 4, 40, 13, t.dim, { align: 'right', font: 'num' });
     }
     for (let i = 1; i <= 3; i++) cv.line(left + traceWidth * i / 4, top, left + traceWidth * i / 4, top + height, 1, t.panelEdge);
-    text(cv, 'OBS', left + traceWidth + 12, top - 7, width - traceWidth - 10, 12, t.dim);
-    const rowHeight = (h - 42) / series.length;
+    if (session) text(cv, 'MIN/MAX', left + traceWidth + 8, top - 8, width - traceWidth - 6, 10, t.dim);
+    const rowHeight = (h - (header ? 42 : 16)) / series.length;
     series.forEach((s, i) => {
         const d = defs[s.id], r = vm.model.readings[s.id], state = get(vm, s.id), n = numeric(vm, s.id);
         const seriesColor = s.color || C.blue;
         const c = ink(t, state, thermalColor(s.id, n, d.unit, seriesColor));
-        const row = y + 38 + i * rowHeight;
+        const row = y + (header ? 36 : 10) + i * rowHeight;
         const status = state.retained ? state.state === 'live' ? 'HELD' : 'HELD / ' + state.state.toUpperCase() :
             state.state !== 'live' ? state.state.toUpperCase() : '';
-        cv.circle(x + 19, row + 8, 3, seriesColor);
-        text(cv, s.label || d.name, x + 29, row + 13, legend - 140, 16, t.text);
-        text(cv, fmt(n, 0) + (n !== null && d.unit ? ' ' + d.unit : ''), x + legend - 5, row + 13, 98, 24, c, { align: 'right', font: 'num' });
-        const physical = calibrated(d);
-        const extrema = physical ? 'OBS ' + fmt(r.min, 0) + ' .. ' + fmt(r.max, 0) :
-            d.decoder === 'unscaled' || /^raw\b/i.test(d.unit || '') ? 'CALIBRATION REQUIRED' : '';
-        text(cv, status ? status + (extrema ? ' / ' + extrema : '') : extrema,
-            x + 29, row + (rowHeight < 43 ? 30 : 31), legend - 34, rowHeight < 43 ? 13 : 14, status ? C.amber : t.dim);
-        if (!physical || unit && d.unit !== unit) return;
-        const ruler = left + traceWidth + 12 + i * 9;
-        const minimum = Number.isFinite(r.min), maximum = Number.isFinite(r.max);
-        if (minimum && maximum) cv.line(ruler, pointY(r.max), ruler, pointY(r.min), 2, seriesColor);
-        [r.min, r.max].forEach((n, index) => {
-            if (!Number.isFinite(n) || index && n === r.min) return;
-            const py = pointY(n);
-            cv.line(ruler - 3, py, ruler + 3, py, 2, seriesColor);
-        });
+        if (sidebar) {
+            cv.circle(x + 17, row + 7, 3, seriesColor);
+            text(cv, s.label || d.name, x + 26, row + 12, legend - 100, 14, t.text);
+            text(cv, fmt(n, 0) + (n !== null && d.unit ? ' ' + d.unit : ''), x + legend + 4, row + 12, 100, 22, c, { align: 'right', font: 'num' });
+            const physical = calibrated(d);
+            const extrema = physical && session ? 'MIN ' + fmt(r.min, 0) + '  MAX ' + fmt(r.max, 0) :
+                d.decoder === 'unscaled' || /^raw\b/i.test(d.unit || '') ? 'SCALE UNKNOWN' : '';
+            text(cv, status || extrema, x + 26, row + 30, legend - 14, 12, status ? C.amber : t.dim);
+        }
+        if (!calibrated(d) || unit && d.unit !== unit) return;
+        if (session) {
+            const ruler = left + traceWidth + 12 + i * 10;
+            const minimum = Number.isFinite(r.min), maximum = Number.isFinite(r.max);
+            if (minimum && maximum) cv.line(ruler, pointY(r.max), ruler, pointY(r.min), 2, seriesColor);
+            [r.min, r.max].forEach((value, index) => {
+                if (!Number.isFinite(value) || index && value === r.min) return;
+                const py = pointY(value);
+                cv.line(ruler - 3, py, ruler + 3, py, 2, seriesColor);
+            });
+        }
+        if (!sidebar) {
+            const label = status || (n === null ? 'UNAVAILABLE' : '');
+            if (label) {
+                cv.circle(left + 5, top + 10 + i * 15, 2, seriesColor);
+                text(cv, label, left + 13, top + 14 + i * 15, traceWidth - 18, 11, status ? C.amber : t.dim);
+            }
+        }
         let previous = null;
         r.history.forEach((p) => {
             if (p.at < start || p.at > now || !Number.isFinite(p.value)) { previous = null; return; }
@@ -133,7 +143,7 @@ function plot(cv, t, vm, box, series, options) {
                 traceWidth - 8, 12, t.dim, { align: 'center' });
         } else {
             text(cv, message, left + traceWidth / 2, top + height / 2, traceWidth - 16, 14, t.dim, { align: 'center' });
-            text(cv, hasSession ? 'OBS limits span the observation session' : unconfirmed ? 'Physical scale unconfirmed' : 'Waiting for a validated source',
+            text(cv, hasSession ? 'Min/max since app opened' : unconfirmed ? 'Physical scale unconfirmed' : 'Waiting for a validated source',
                 left + traceWidth / 2, top + height / 2 + 20, traceWidth - 16, 13, t.dim, { align: 'center' });
         }
     }
