@@ -23,5 +23,30 @@
         "new":  "module.exports = { watch, proxy, call, get, set, on, onAvailable, loadConfig, hasNative: () =\u003e !!someip };",
         "old":  "module.exports = { watch, proxy, call, set, on, onAvailable, loadConfig, hasNative: () =\u003e !!someip };",
         "file":  "signals.js"
+    },
+    {
+        "new": "const { drawCredit } = require('./credits');\nconst { swipeTouch, cancelSwipe } = require('./swipe');",
+        "old": "const { drawCredit } = require('./credits');",
+        "file": "display.js"
+    },
+    {
+        "new": "    _touch(phase, x, y) {\n        if (swipeTouch(this, phase, x, y, HMI.left)) return;",
+        "old": "    _touch(phase, x, y) {",
+        "file": "display.js"
+    },
+    {
+        "new": "    _lost() {\n        cancelSwipe(this);",
+        "old": "    _lost() {",
+        "file": "display.js"
+    },
+    {
+        "new": "        const on = this._shown();\n        if (!on) cancelSwipe(this);",
+        "old": "        const on = this._shown();",
+        "file": "display.js"
+    },
+    {
+        "new": "        if (!this.canSheet()) return false;\n        cancelSwipe(this);",
+        "old": "        if (!this.canSheet()) return false;",
+        "file": "display.js"
     }
 ]

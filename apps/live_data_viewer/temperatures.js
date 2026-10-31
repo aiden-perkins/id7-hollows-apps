@@ -3,51 +3,53 @@
 const I = require('./instruments');
 const C = I.C;
 
-// Keep physical sensor identities separate; unvalidated channels remain unavailable.
-// Colors are refreshed at draw time to follow the active driving-mode palette.
+// Sensor location and modeled temperatures stay explicit, including missing channels.
+// All traces use the fixed instrument blue/cyan palette.
 const groups = [
     {
         box: {},
-        options: { title: 'ENGINE / CHARGE COOLER', legendWidth: 200 },
+        options: { title: 'ENGINE / ENVIRONMENT', legendWidth: 200, quiet: true },
         series: [
             { id: 'oil', label: 'Engine oil' },
             { id: 'coolant', label: 'Coolant' },
             { id: 'chargeCoolerCoolant', label: 'CC coolant' },
+            { id: 'outside', label: 'Outside' },
+            { id: 'cabin', label: 'Cabin' },
         ],
     },
     {
         box: {},
-        options: { title: 'TRANSMISSION', legendWidth: 200 },
+        options: { title: 'TRANSMISSION', legendWidth: 200, quiet: true },
         series: [
-            { id: 'transmission1', label: 'Trans oil 1' },
-            { id: 'transmission2', label: 'Trans oil 2' },
+            { id: 'transmission1', label: 'Oil · vehicle' },
+            { id: 'transmission2', label: 'Oil · EGS' },
             { id: 'converter', label: 'Converter' },
         ],
     },
     {
         box: {},
-        options: { title: 'EXHAUST MODEL / CATALYST GAS', legendWidth: 200 },
+        options: { title: 'EXHAUST MODEL / CATALYST GAS', legendWidth: 200, quiet: true },
         series: [
             { id: 'exhaustBank1', label: 'Exh B1 mdl' },
             { id: 'exhaustBank2', label: 'Exh B2 mdl' },
-            { id: 'catalystBank1', label: 'Catalyst B1' },
-            { id: 'catalystBank2', label: 'Catalyst B2' },
+            { id: 'catalystBank1', label: 'Cat gas B1' },
+            { id: 'catalystBank2', label: 'Cat gas B2' },
         ],
     },
     {
         box: {},
-        options: { legendWidth: 200 },
+        options: { title: 'AIR TEMPERATURES', legendWidth: 200, quiet: true },
         series: [
-            { id: 'iatBank1', label: 'IAT bank 1' },
-            { id: 'iatBank2', label: 'IAT bank 2' },
-            { id: 'outside', label: 'Outside' },
-            { id: 'chargeAir', label: 'Charge air' },
-            { id: 'cabin', label: 'Cabin air' },
+            { id: 'iat', label: 'Intake' },
+            { id: 'iatBank1', label: 'Intake B1' },
+            { id: 'iatBank2', label: 'Intake B2' },
+            { id: 'chargeAir', label: 'CC B1/S1' },
+            { id: 'preThrottleAir', label: 'Pre-thr.' },
         ],
     },
     {
         box: {},
-        options: { title: 'TRANSFER CASE / REAR DIFF', legendWidth: 200 },
+        options: { title: 'TRANSFER CASE / REAR DIFF', legendWidth: 200, quiet: true },
         series: [
             { id: 'transferCase', label: 'Clutch mdl' },
             { id: 'rearDifferential', label: 'Rear diff' },
@@ -55,7 +57,7 @@ const groups = [
     },
     {
         box: {},
-        options: { title: 'PRESSURES', legendWidth: 200 },
+        options: { title: 'PRESSURES', legendWidth: 200, quiet: true },
         series: [
             { id: 'oilPressure', label: 'Oil pressure' },
             { id: 'transmissionPressure', label: 'Trans press.' },

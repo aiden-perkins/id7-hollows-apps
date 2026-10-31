@@ -1,8 +1,8 @@
 {
   "id": "live_data_viewer",
   "title": "Live Data Viewer",
-  "description": "Performance meters with visual extrema, compact driving instruments, rolling temperatures and eight-cylinder engine-health comparison",
-  "version": "1.5.0",
+  "description": "Performance meters, front/rear active anti-roll dynamics, rolling temperatures and eight-cylinder engine-health comparison",
+  "version": "1.7.0",
   "vendor": "custom",
   "loggingId": "OA9E",
   "iconGlyph": "LIVE",
@@ -45,9 +45,6 @@
     "de.bmw.infotainment.vehicle.TPMSInternalData": {
       "tpmsInternalLastValues": "rs"
     },
-    "de.bmw.infotainment.controlelements.FrontCCU": {
-      "statusRotaryEncoderState": "rs"
-    },
     "com.harman.infotainment.systemfunctions.tasu.tasu.InternalTasu": {
       "_instances": "SystemFunctionsInternalTasuInst1",
       "_methods": ["sendTasuRequest"],
@@ -61,55 +58,7 @@
       "title": "Live Data Viewer",
       "graphic": "MAIN_GFX",
       "bar": false,
-      "buttons": []
-    },
-    {
-      "name": "PREFERENCES",
-      "kind": "list",
-      "title": "Settings",
-      "parent": "MAIN",
-      "items": [
-        [
-          "text3",
-          "PREF_FIXED",
-          ""
-        ],
-        [
-          "button",
-          "PREF_DEMO",
-          "Demo data"
-        ],
-        [
-          "button",
-          "PREF_TREND",
-          "Recent graph window"
-        ],
-        [
-          "button",
-          "PREF_RATE",
-          "Refresh preference"
-        ],
-        [
-          "button",
-          "PREF_ORDER",
-          "Category order"
-        ],
-        [
-          "text3",
-          "PREF_NOTES",
-          ""
-        ],
-        [
-          "text3",
-          "PREF_NOTICE",
-          ""
-        ],
-        [
-          "button",
-          "PREF_HOME",
-          "Back to dashboard"
-        ]
-      ]
+      "buttons": [["BTN_SETTINGS", "Settings"]]
     }
   ],
   "settings": [
@@ -118,8 +67,82 @@
       "options": [["off", "Off"], ["on", "On (simulated)"]]
     },
     {
+      "key": "demoDriveMode", "label": "Demo driving mode", "type": "choice", "default": "SPORT EXPERT",
+      "options": [["SPORT EXPERT", "Sport"], ["COMFORT", "Comfort"], ["ECO PRO EFFICIENT", "Eco Pro"]]
+    },
+    {
       "key": "section", "label": "Initial page", "type": "choice", "default": "driving",
-      "options": [["driving", "Driving"], ["temperatures", "Temperatures"], ["health", "Engine health"]]
+      "options": [["driving", "Driving"], ["dynamics", "Dynamics"], ["temperatures", "Temperatures"], ["health", "Engine health"]]
+    },
+    {
+      "key": "refreshMs", "label": "Getter refresh", "type": "number", "unit": "ms", "default": 100,
+      "steps": [100, 250, 500, 1000, 2000]
+    },
+    {
+      "key": "trendSeconds", "label": "Recent graph window", "type": "number", "unit": "s", "default": 180,
+      "steps": [60, 180, 600]
+    },
+    {
+      "key": "categoryOrder", "label": "Category order", "type": "choice", "default": "driving,dynamics,temperatures,health",
+      "options": [
+        ["driving,dynamics,temperatures,health", "Driving / Dynamics / Temperatures / Engine health"],
+        ["driving,dynamics,health,temperatures", "Driving / Dynamics / Engine health / Temperatures"],
+        ["temperatures,driving,dynamics,health", "Temperatures / Driving / Dynamics / Engine health"],
+        ["temperatures,health,driving,dynamics", "Temperatures / Engine health / Driving / Dynamics"],
+        ["health,driving,dynamics,temperatures", "Engine health / Driving / Dynamics / Temperatures"],
+        ["health,temperatures,driving,dynamics", "Engine health / Temperatures / Driving / Dynamics"]
+      ]
+    },
+    {
+      "key": "displayNote", "label": "Display", "type": "text",
+      "default": "Up to 60 FPS; US units; fuel L then G, two decimals"
+    },
+    {
+      "key": "fuelNote", "label": "Fuel percentage", "type": "text",
+      "default": "Total litres / nominal 68 L M850i tank; graphical reference, not ECU-reported capacity"
+    },
+    {
+      "key": "samplingNote", "label": "Sampling", "type": "text",
+      "default": "Only the visible category collects live readings"
+    },
+    {
+      "key": "pedalNote", "label": "Pedals", "type": "text",
+      "default": "50 ms target; ECU latency and shared queue limit replies"
+    },
+    {
+      "key": "brakeNote", "label": "Brake", "type": "text",
+      "default": "Pressure, not pedal percent; parking brake from Vehicle2"
+    },
+    {
+      "key": "kickdownNote", "label": "Kickdown", "type": "text",
+      "default": "DME digital switch; never inferred from pedal position"
+    },
+    {
+      "key": "slowNote", "label": "Slower readings", "type": "text",
+      "default": "Fuel 5 s; battery 2 s; TPMS at least 5 s"
+    },
+    {
+      "key": "exhaustNote", "label": "Exhaust controls", "type": "text",
+      "default": "Manual requests only; highlight is not measured position"
+    },
+    {
+      "key": "modelNote", "label": "Temperature models", "type": "text",
+      "default": "Exhaust and transfer-clutch models are labelled"
+    },
+    {
+      "key": "missingNote", "label": "Unsupported readings", "type": "text",
+      "default": "Front / rear delivered power unknown; no torque-split estimate"
+    },
+    {
+      "key": "sessionNote", "label": "Min / max", "type": "text",
+      "default": "This app session only"
+    },
+    {
+      "key": "demoNote", "label": "Demo safety", "type": "text",
+      "default": "Simulated values; exhaust requests disabled"
+    },
+    {
+      "key": "lastError", "label": "Last error", "type": "text", "default": "None"
     }
   ]
 }

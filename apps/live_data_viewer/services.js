@@ -27,9 +27,16 @@ class Services {
     }
     activate(ids, force) {
         if (this.closed) return;
-        this.ids = ids.slice(); this.model.activate(ids);
+        const expanded = new Set(ids), include = (id) => {
+            const d = D.definitions.find((entry) => entry.id === id);
+            if (d && d.dependsOn) d.dependsOn.forEach((input) => {
+                if (!expanded.has(input)) { expanded.add(input); include(input); }
+            });
+        };
+        ids.forEach(include);
+        this.ids = Array.from(expanded); this.model.activate(this.ids);
         const wanted = {};
-        const active = D.definitions.filter((d) => ids.includes(d.id));
+        const active = D.definitions.filter((d) => expanded.has(d.id));
         this.diagnostic.activate(active.filter((d) => d.diag));
         active.filter((d) => d.source && !d.diag).forEach((d) => {
             const key = D.sourceKey(d);

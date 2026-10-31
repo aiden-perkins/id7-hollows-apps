@@ -3,6 +3,7 @@ const D = require('./definitions');
 const { Diag, NRC, hex } = require('./kit/diag');
 
 const REQUEST_MS = 5000;
+const floatBytes = new Uint8Array(4), floatView = new DataView(floatBytes.buffer);
 function deadline(promise, ms, label) {
     let timer;
     return Promise.race([Promise.resolve(promise), new Promise((resolve, reject) => {
@@ -13,12 +14,16 @@ function byte(value) { return Number.isInteger(value) && value >= 0 && value <= 
 function configuration(d) {
     const c = d.diag;
     if (!c || typeof c !== 'object' || !byte(c.target) || c.target === 0xDF || c.target === 0xF2 ||
-        c.sid !== 0x22 || !Number.isInteger(c.did) || c.did < 0 || c.did > 65535 ||
+        ![0x22, 0x01].includes(c.sid) || !Number.isInteger(c.did) || c.did < 0 || c.did > (c.sid === 0x01 ? 255 : 65535) ||
         !Number.isSafeInteger(c.at) || c.at < 0 || !Number.isInteger(c.bytes) || c.bytes < 1 || c.bytes > 6 ||
         (c.signed !== undefined && typeof c.signed !== 'boolean') ||
         (c.minBytes !== undefined && (!Number.isSafeInteger(c.minBytes) || c.minBytes < 0)) ||
+        (c.exactBytes !== undefined && (!Number.isSafeInteger(c.exactBytes) || c.exactBytes < c.at + c.bytes)) ||
+        (c.format !== undefined && (c.format !== 'float32' || c.bytes !== 4 || c.signed || c.mask !== undefined)) ||
         (c.validAt !== undefined && (!Number.isSafeInteger(c.validAt) || c.validAt < 0 ||
             !Array.isArray(c.validValues) || !c.validValues.length || !c.validValues.every(byte))) ||
+        (c.validMask !== undefined && (!byte(c.validMask) || c.validAt === undefined)) ||
+        (c.mask !== undefined && (!byte(c.mask) || c.bytes !== 1 || !Number.isInteger(c.shift) || c.shift < 0 || c.shift > 7)) ||
         (c.qualityAt !== undefined && (!Number.isSafeInteger(c.qualityAt) || c.qualityAt < 0))) {
         throw new Error('Invalid physical read-only diagnostic configuration');
     }
@@ -43,8 +48,10 @@ class DiagnosticServices {
             try {
                 const c = configuration(d), key = [c.target, c.sid, c.did].join(':');
                 if (!groups.has(key)) groups.set(key, { target: c.target, sid: c.sid,
-                    params: [c.did >> 8, c.did & 255], entries: [], nextAt: 0 });
-                if (d.id === 'accelerator' || d.id === 'brakePressure') groups.get(key).fast = true;
+                    params: c.sid === 0x01 ? [c.did] : [c.did >> 8, c.did & 255], entries: [], nextAt: 0, refreshBy: 0 });
+                if (d.id === 'accelerator' || d.id === 'brakePressure' || d.id === 'kickdown' ||
+                    d.id === 'boostAbsolute' || d.id === 'barometricPressure') groups.get(key).fast = true;
+                if (d.refreshPriority) groups.get(key).refreshPriority = true;
                 groups.get(key).entries.push({ d, config: c });
             } catch (error) { this.model.transport(D.sourceKey(d), d.field, 'error', error.message); }
         });
@@ -88,7 +95,11 @@ class DiagnosticServices {
                     outcomes.push({ target, accepted: true });
                 } catch (error) { outcomes.push({ target, accepted: false, error: error.message }); }
             }
-            this.groups.forEach((group) => { if (group.params[0] === 0x62 && group.params[1] === 0xFD) group.nextAt = 0; });
+            this.groups.forEach((group) => {
+                if ((group.params[0] === 0x62 || group.params[0] === 0x64) && group.params[1] === 0xFD) {
+                    group.nextAt = 0; group.refreshBy = 0;
+                }
+            });
             if (outcomes.some((outcome) => !outcome.accepted)) throw new Error(outcomes.map((outcome) =>
                 'DME 0x' + hex(outcome.target) + ': ' + (outcome.accepted ? 'accepted' : outcome.error)).join('; '));
             return { accepted: true, mode, outcomes, confirmed: 'UNKNOWN',
@@ -207,11 +218,21 @@ class DiagnosticServices {
             if (group.nextAt <= now && (!due || group.nextAt < due.nextAt)) due = group;
             nextAt = Math.min(nextAt, group.nextAt);
         });
-        const fast = this.groups.filter((group) => group.fast && group.nextAt <= now);
-        if (fast.length && this.fastReads < 2) {
-            due = fast.reduce((first, group) => group.nextAt < first.nextAt ? group : first);
-            this.fastReads++;
-        } else if (due) this.fastReads = 0;
+        // Current exhaust output must not sit behind every slow/background read on
+        // the shared serial queue. Prioritize a due output nearing its freshness
+        // deadline; failed groups still observe their ordinary backoff.
+        let urgent = null;
+        this.groups.forEach((group) => {
+            if (group.refreshPriority && group.nextAt <= now && group.refreshBy <= now + 1000 &&
+                (!urgent || group.refreshBy < urgent.refreshBy)) urgent = group;
+        });
+        let fast = null;
+        if (!urgent && this.fastReads < 2) this.groups.forEach((group) => {
+            if (group.fast && group.nextAt <= now && (!fast || group.nextAt < fast.nextAt)) fast = group;
+        });
+        if (urgent) { due = urgent; this.fastReads = 0; }
+        else if (fast) { due = fast; this.fastReads++; }
+        else if (due) this.fastReads = 0;
         if (due) this._request(due);
         else {
             this.timer = setTimeout(() => this._wake(), Math.max(1, nextAt - now));
@@ -264,11 +285,16 @@ class DiagnosticServices {
         group.entries.forEach(({ d, config: c }) => {
             const required = base + Math.max(c.at + c.bytes, c.minBytes || 0, c.validAt === undefined ? 0 : c.validAt + 1,
                 c.qualityAt === undefined ? 0 : c.qualityAt + 1);
+            if (c.exactBytes !== undefined && reply.uds.length !== base + c.exactBytes) {
+                this.model.transport(D.sourceKey(d), d.field, 'invalid', 'Unexpected diagnostic payload length: expected exactly ' + c.exactBytes + ' bytes');
+                return;
+            }
             if (reply.uds.length < required) {
                 this.model.transport(D.sourceKey(d), d.field, 'invalid', 'Short diagnostic response: expected at least ' + required + ' bytes');
                 return;
             }
-            if (c.validAt !== undefined && !c.validValues.includes(reply.uds[base + c.validAt])) {
+            const validity = c.validAt === undefined ? null : reply.uds[base + c.validAt];
+            if (c.validAt !== undefined && !c.validValues.includes(c.validMask === undefined ? validity : validity & c.validMask)) {
                 this.model.transport(D.sourceKey(d), d.field, 'unavailable', 'Diagnostic validity byte at payload offset ' +
                     c.validAt + ' is 0x' + hex(reply.uds[base + c.validAt]));
                 return;
@@ -281,12 +307,19 @@ class DiagnosticServices {
                 }
             }
             let value = 0;
-            for (let index = 0; index < c.bytes; index++) value = value * 256 + reply.uds[base + c.at + index];
-            if (c.signed && reply.uds[base + c.at] >= 0x80) value -= Math.pow(256, c.bytes);
-            if (!Number.isSafeInteger(value)) {
-                this.model.transport(D.sourceKey(d), d.field, 'invalid', 'Diagnostic integer is not safely representable'); return;
+            if (c.format === 'float32') {
+                for (let index = 0; index < 4; index++) floatBytes[index] = reply.uds[base + c.at + index];
+                value = floatView.getFloat32(0, false);
+            } else {
+                for (let index = 0; index < c.bytes; index++) value = value * 256 + reply.uds[base + c.at + index];
+                if (c.signed && reply.uds[base + c.at] >= 0x80) value -= Math.pow(256, c.bytes);
+                if (c.mask !== undefined) value = (value & c.mask) >>> c.shift;
             }
-            this.model.receive(D.sourceKey(d), d.field, { value, ecu: reply.ecu, uds: reply.uds.slice() }, 'diagnostic');
+            if (c.format === 'float32' ? !Number.isFinite(value) : !Number.isSafeInteger(value)) {
+                this.model.transport(D.sourceKey(d), d.field, 'invalid', 'Diagnostic quantity is not finite or safely representable'); return;
+            }
+            this.model.receive(D.sourceKey(d), d.field, { value, ecu: reply.ecu, sid: group.sid,
+                identifier: c.did, uds: reply.uds.slice() }, 'diagnostic');
         });
     }
     _finish(op, error, reply) {
@@ -310,6 +343,9 @@ class DiagnosticServices {
         // Never overlap calls or hammer a refused/unsupported DID at the fast success rate.
         op.group.nextAt = Date.now() + Math.max(error ? 5000 : 50,
             Number.isFinite(cadence) && cadence > 0 ? cadence : 1000);
+        if (!error && op.group.refreshPriority) {
+            op.group.refreshBy = Date.now() + Math.min.apply(null, op.group.entries.map(({ d }) => d.staleMs));
+        }
         // Even a response timeout cannot start a second native call before the first settles.
         this._release(op);
     }

@@ -149,7 +149,7 @@ func (a *application) preview(args []string) error {
 	renderer := flags.String("renderer", "", "compatible renderer executable")
 	background := flags.String("background", "", "PNG or JPEG composited under the app")
 	fixture := flags.String("fixture", "", "host-only JavaScript data fixture")
-	section := flags.String("section", "", "section setting, such as mode, lights, or status in MGU Lab")
+	section := flags.String("section", "", "initial section setting, such as driving or temperatures")
 	realtime := flags.Bool("realtime", false, "advance demo time at wall-clock speed")
 	build := flags.Bool("build", false, "package the selected app before previewing")
 	var sets, clicks, focuses repeatedOption

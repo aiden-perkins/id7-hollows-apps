@@ -1,13 +1,31 @@
 'use strict';
 const C = { blue: '#81c4ff', cyan: '#4e9fdf', amber: '#ffbd69', red: '#ff565c',
     series: ['#81c4ff', '#4e9fdf', '#b6ddff', '#5d82a8'] };
-function palette(mode) {
-    const value = mode && mode.state === 'live' && !mode.retained ? String(mode.value) : '';
-    const colors = /^SPORT/.test(value) ? ['#ff565c', '#81c4ff', '#b6ddff', '#4e9fdf'] :
-        /^ECO/.test(value) ? ['#5bdacb', '#68aaff', '#ae8fea', '#86d590'] :
-        /^COMFORT|^ADAPTIVE/.test(value) ? ['#ffb44f', '#cd9468', '#ffe08a', '#df843d'] :
-        ['#81c4ff', '#4e9fdf', '#b6ddff', '#5d82a8'];
-    C.blue = colors[0]; C.cyan = colors[1]; C.series = colors;
+const palettes = {
+    initial: { blue: '#81c4ff', cyan: '#4e9fdf', series: ['#81c4ff', '#4e9fdf', '#b6ddff', '#5d82a8'] },
+    sport: { blue: '#ff565c', cyan: '#81c4ff', series: ['#ff565c', '#81c4ff', '#bf3446', '#4e9fdf'] },
+    comfort: { blue: '#f7a54b', cyan: '#b9824f', series: ['#f7a54b', '#b9824f', '#f4d26b', '#e7b77b'] },
+    eco: { blue: '#81c4ff', cyan: '#42c8bc', series: ['#81c4ff', '#42c8bc', '#a992e8', '#7dcf8a'] },
+};
+const modePalettes = {
+    'SPORT DYNAMIC': 'sport', 'SPORT EXPERT': 'sport', 'SPORT INDIVIDUAL': 'sport',
+    COMFORT: 'comfort', 'COMFORT PLUS': 'comfort', 'COMFORT INDIVIDUAL': 'comfort',
+    'ECO PRO EFFICIENT': 'eco', 'ECO PRO PLUS': 'eco', 'ECO PRO INDIVIDUAL': 'eco', ADAPTIVE: 'initial',
+};
+const lastPalettes = new WeakMap();
+function palette(vm) {
+    const model = vm.model, definition = model.definitions.driveMode;
+    let selected = lastPalettes.get(model) || palettes.initial;
+    if (definition) {
+        const mode = model.state(definition);
+        if (mode.state === 'live' && !mode.retained && Object.prototype.hasOwnProperty.call(modePalettes, mode.value)) {
+            selected = palettes[modePalettes[mode.value]];
+            lastPalettes.set(model, selected);
+        }
+    }
+    // Keep imported C references live; all normal gauges share the same mode primary.
+    Object.assign(C, selected);
+    return C;
 }
 function text(cv, str, x, y, width, size, color, options) {
     let s = String(str == null ? '' : str);
@@ -26,15 +44,7 @@ function numeric(vm, id) {
 }
 function fmt(n, places) { return Number.isFinite(n) ? n.toFixed(places === undefined ? 1 : places) : '--'; }
 function ink(t, s, normal) {
-    return s.retained || ['stale', 'error', 'invalid'].includes(s.state) ? C.amber : s.state === 'live' ? normal || C.blue : t.dim;
-}
-function thermalColor(id, n, unit, normal) {
-    if (!Number.isFinite(n) || !/^(°?F|°?C|deg F|deg C)$/.test(unit || '')) return normal;
-    const c = /F/.test(unit) ? (n - 32) * 5 / 9 : n;
-    const thresholds = { oil: [70, 120, 130], coolant: [60, 105, 112], transmission1: [50, 110, 120],
-        transmission2: [50, 110, 120], converter: [50, 110, 120], iatBank1: [-100, 50, 65], iatBank2: [-100, 50, 65], chargeAir: [-100, 50, 65] };
-    const r = thresholds[id];
-    return r ? c >= r[2] ? C.red : c >= r[1] ? C.amber : c < r[0] ? C.blue : normal : normal;
+    return s.retained || ['stale', 'error', 'invalid'].includes(s.state) ? t.dim : s.state === 'live' ? normal || C.blue : t.dim;
 }
 // Session min/max rulers and rolling-window extrema are distinct observations.
 function plot(cv, t, vm, box, series, options) {
@@ -90,9 +100,9 @@ function plot(cv, t, vm, box, series, options) {
     series.forEach((s, i) => {
         const d = defs[s.id], r = vm.model.readings[s.id], state = get(vm, s.id), n = numeric(vm, s.id);
         const seriesColor = s.color || C.blue;
-        const c = ink(t, state, thermalColor(s.id, n, d.unit, seriesColor));
+        const c = ink(t, state, seriesColor);
         const row = y + (header ? 36 : 10) + i * rowHeight;
-        const status = state.retained ? state.state === 'live' ? 'HELD' : 'HELD / ' + state.state.toUpperCase() :
+        const status = o.quiet ? '' : state.retained ? state.state === 'live' ? 'HELD' : 'HELD / ' + state.state.toUpperCase() :
             state.state !== 'live' ? state.state.toUpperCase() : '';
         if (sidebar) {
             cv.circle(x + 17, row + 7, 3, seriesColor);
@@ -100,7 +110,7 @@ function plot(cv, t, vm, box, series, options) {
             text(cv, fmt(n, 0) + (n !== null && d.unit ? ' ' + d.unit : ''), x + legend + 4, row + 12, 100, 22, c, { align: 'right', font: 'num' });
             const physical = calibrated(d);
             const extrema = physical && session ? 'MIN ' + fmt(r.min, 0) + '  MAX ' + fmt(r.max, 0) :
-                d.decoder === 'unscaled' || /^raw\b/i.test(d.unit || '') ? 'SCALE UNKNOWN' : '';
+                !o.quiet && (d.decoder === 'unscaled' || /^raw\b/i.test(d.unit || '')) ? 'SCALE UNKNOWN' : '';
             text(cv, status || extrema, x + 26, row + 30, legend - 14, 12, status ? C.amber : t.dim);
         }
         if (!calibrated(d) || unit && d.unit !== unit) return;
@@ -114,7 +124,7 @@ function plot(cv, t, vm, box, series, options) {
                 cv.line(ruler - 3, py, ruler + 3, py, 2, seriesColor);
             });
         }
-        if (!sidebar) {
+        if (!sidebar && !o.quiet) {
             const label = status || (n === null ? 'UNAVAILABLE' : '');
             if (label) {
                 cv.circle(left + 5, top + 10 + i * 15, 2, seriesColor);
@@ -126,7 +136,7 @@ function plot(cv, t, vm, box, series, options) {
             if (p.at < start || p.at > now || !Number.isFinite(p.value)) { previous = null; return; }
             const px = left + traceWidth * (p.at - start) / (seconds * 1000), py = pointY(p.value);
             if (previous && p.at > previous.at && p.at - previous.at <= d.staleMs) {
-                cv.line(previous.x, previous.y, px, py, 2, thermalColor(s.id, p.value, d.unit, seriesColor));
+                cv.line(previous.x, previous.y, px, py, 2, seriesColor);
             } else cv.circle(px, py, 2, seriesColor);
             previous = { x: px, y: py, at: p.at };
         });
@@ -141,7 +151,7 @@ function plot(cv, t, vm, box, series, options) {
             cv.circle(px, py, radius - 1, t.panelBottom);
         });
     }
-    if (!hasPoints) {
+    if (!hasPoints && !o.quiet) {
         const unconfirmed = series.some((s) => defs[s.id].source && !calibrated(defs[s.id]));
         const message = hasSession ? 'NO SAMPLES IN WINDOW' : 'NO VALIDATED SAMPLES';
         if (compact) {
@@ -158,4 +168,4 @@ function plot(cv, t, vm, box, series, options) {
     text(cv, '-' + seconds + 's', left, y + h - 9, traceWidth / 2, 13, t.dim);
     text(cv, 'NOW' + (unit ? ' / ' + unit : ''), left + traceWidth, y + h - 9, traceWidth / 2 - 4, 13, t.dim, { align: 'right' });
 }
-module.exports = { C, palette, text, get, numeric, fmt, ink, plot, thermalColor };
+module.exports = { C, palette, text, get, numeric, fmt, ink, plot };

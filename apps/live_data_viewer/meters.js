@@ -52,45 +52,37 @@ const defaults = { boost: 'psi', horsepower: 'hp', torque: 'lb-ft' };
 function dial(cv, t, vm, id, title, x, color) {
     const d = vm.model.definitions[id], unit = d.unit || defaults[id], spec = references[id][unit];
     const supported = !!d.unit && !!spec && d.numeric && d.decoder !== 'unscaled' && !/^raw\b/i.test(d.unit);
-    const nonnegative = id === 'horsepower' || id === 'torque';
-    // Clamp presentation only: decoding, samples, and session extrema stay untouched.
-    const displayed = (v) => Number.isFinite(v) ? nonnegative ? Math.max(0, v) : v : null;
-    const n = displayed(supported ? numeric(vm, id) : null), s = get(vm, id), r = vm.model.readings[id];
-    const ref = spec || references[id][defaults[id]];
-    const range = supported && !nonnegative ? bounds(vm, id, ref.slice(0, 2), ref[2]) : ref;
-    const top = vm.contentTop, bottom = vm.contentBottom, cx = x + 142, cy = top + (bottom - top - 40) / 2;
-    const angle = (v) => -130 + 260 * clamp((v - range[0]) / (range[1] - range[0]), 0, 1);
-    cv.arc(cx, cy, 118, 130, -130, 130, t.track);
-    cv.arc(cx, cy, 108, 113, -130, 130, t.track);
+    const range = spec || references[id][defaults[id]], s = get(vm, id), r = vm.model.readings[id];
+    // Presentation only: retain the signed physical samples and extrema in the model.
+    const displayed = (value) => Number.isFinite(value) ?
+        id === 'boost' ? clamp(value, 0, 40) : Math.max(0, value) : null;
+    const n = displayed(supported ? numeric(vm, id) : null);
+    const cx = x + 184, cy = vm.contentTop + 160;
+    const angle = (value) => -130 + 260 * clamp((value - range[0]) / (range[1] - range[0]), 0, 1);
+    cv.arc(cx, cy, 137, 151, -130, 130, t.track);
+    cv.arc(cx, cy, 123, 128, -130, 130, C.cyan + '60');
     for (let i = 0; i <= 20; i++) {
         const a = -130 + 13 * i, major = i % 5 === 0;
-        const p = point(cx, cy, 134, a), q = point(cx, cy, major ? 140 : 137, a);
+        const p = point(cx, cy, 155, a), q = point(cx, cy, major ? 164 : 160, a);
         cv.line(p[0], p[1], q[0], q[1], major ? 2 : 1.5, t.tick);
         if (major) {
-            const z = point(cx, cy, 92, a);
-            text(cv, fmt(range[0] + (range[1] - range[0]) * i / 20, range[1] <= 3 ? 1 : 0), z[0], z[1] + 5, 48, 15, t.dim, { align: 'center', font: 'num' });
+            const z = point(cx, cy, 107, a);
+            text(cv, fmt(range[0] + (range[1] - range[0]) * i / 20, 0), z[0], z[1] + 6, 56, 17, t.dim, { align: 'center', font: 'num' });
         }
     }
-    const min = displayed(supported ? r.min : null), max = displayed(supported ? r.max : null);
-    if (min !== null && max !== null) cv.arc(cx, cy, 108, 113, angle(min), Math.max(angle(min) + 0.8, angle(max)), color + '70');
-    if (min !== null) { const p = point(cx, cy, 136, angle(min)); cv.circle(p[0], p[1], 4, color); }
-    if (max !== null) { const p = point(cx, cy, 136, angle(max)); diamond(cv, p[0], p[1], 5, color); }
+    const max = displayed(supported ? r.max : null);
+    if (max !== null) { const p = point(cx, cy, 158, angle(max)); diamond(cv, p[0], p[1], 5, C.cyan); }
     if (n !== null) {
-        const c = ink(t, s, color), a = angle(n), p = point(cx, cy, 115, a), q = point(cx, cy, 132, a);
-        if (a > -130) cv.arc(cx, cy, 118, 130, -130, a, c);
+        const a = angle(n), p = point(cx, cy, 134, a), q = point(cx, cy, 153, a), c = ink(t, s, color);
+        if (a > -130) cv.arc(cx, cy, 137, 151, -130, a, c);
         cv.line(p[0], p[1], q[0], q[1], 3, t.text);
     }
-    const readout = fmt(n, id === 'boost' ? 1 : 0), readoutOptions = { align: 'center', font: 'num' };
-    // Values above the graphical reference remain fully readable, not truncated.
-    const readoutSize = Math.min(74, 74 * 248 / Math.max(1, cv.textWidth(readout, 74, readoutOptions)));
-    cv.text(readout, cx, cy + 43, readoutSize, ink(t, s, color), readoutOptions);
-    text(cv, supported ? unit : d.unit ? 'UNIT UNCONFIRMED' : defaults[id] + ' / SCALE', cx, cy + 91, 248, 22, t.dim, { align: 'center' });
-    text(cv, title, cx, cy + 119, 250, 22, t.text, { align: 'center', font: 'bold' });
-    const signalStatus = status(vm, id), scaleStatus = n !== null && n > range[1] ? 'ABOVE SCALE' : '';
-    text(cv, [scaleStatus, signalStatus].filter(Boolean).join(' / '), cx, cy + 136, 268, 14, ink(t, s, color), { align: 'center' });
-    const extrema = 'MIN ' + fmt(min, id === 'boost' ? 1 : 0) + '   MAX ' + fmt(max, id === 'boost' ? 1 : 0);
-    const extremaSize = Math.min(17, 17 * 268 / Math.max(1, cv.textWidth(extrema, 17, readoutOptions)));
-    cv.text(extrema, cx, bottom - 34, extremaSize, t.dim, readoutOptions);
+    const readout = fmt(n, id === 'boost' ? 1 : 0), options = { align: 'center', font: 'num' };
+    const size = Math.min(84, 84 * 292 / Math.max(1, cv.textWidth(readout, 84, options)));
+    cv.text(readout, cx, cy + 34, size, ink(t, s, color), options);
+    text(cv, unit, cx, cy + 76, 292, 24, t.dim, { align: 'center' });
+    text(cv, title, cx, cy + 110, 300, 24, t.text, { align: 'center', font: 'bold' });
+    text(cv, 'MAX ' + fmt(max, id === 'boost' ? 1 : 0), cx, cy + 135, 300, 18, t.dim, options);
 }
 function linear(cv, t, vm, id, title, box, reference, color, places) {
     const d = vm.model.definitions[id], s = get(vm, id), x = box.x, y = box.y, w = box.w;

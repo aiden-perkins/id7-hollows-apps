@@ -66,27 +66,69 @@ class Model {
         const value = r.decoded.value;
         r.min = r.min === null ? value : Math.min(r.min, value);
         r.max = r.max === null ? value : Math.max(r.max, value);
-        const last = r.history[r.history.length - 1];
-        if (r.breakNext || !last || now - last.at >= 500) r.history.push({ at: now, value });
-        else last.value = value;
+        let point = r.history[r.history.length - 1];
+        if (r.breakNext || !point || now - point.at >= 500) { point = { at: now, value }; r.history.push(point); }
+        else point.value = value;
+        if (d.id === 'gForce') { point.lateral = r.decoded.lateral; point.longitudinal = r.decoded.longitudinal; }
         r.breakNext = false; this.prune(r);
     }
     derivedValue(d, now) {
         const r = this.readings[d.id];
         if (!r.collecting) return { state: r.at ? 'stale' : 'waiting', note: 'Collection paused outside this page' };
-        if (d.id === 'boost' || d.id === 'exhaust') {
+        if (d.preferred) {
+            for (const id of d.dependsOn) {
+                const source = definitionsById[id], value = this.state(source);
+                if (value.state === 'live' && Number.isFinite(value.value) && value.unit === d.unit) {
+                    return Object.assign({}, value, { sourceId: id,
+                        quality: source.name + ': ' + (value.quality || source.notes) });
+                }
+            }
+            return { state: 'unavailable', note: 'No fresh supported temperature source: ' +
+                d.dependsOn.map((id) => definitionsById[id].name + ' (' + this.state(definitionsById[id]).state + ')').join(', ') };
+        }
+        if (d.id === 'boost' || d.id === 'exhaust' || d.id === 'frontPower' || d.id === 'rearPower' || d.id === 'gForce') {
             const ids = d.dependsOn, a = this.readings[ids[0]], b = this.readings[ids[1]];
             const first = this.state(definitionsById[ids[0]]), second = this.state(definitionsById[ids[1]]);
-            if (first.state !== 'live' || second.state !== 'live') return { state: 'waiting',
-                note: 'Requires both fresh ' + (d.id === 'boost' ? 'absolute and ambient pressure' : 'DME command readings') };
+            if (first.state !== 'live' || second.state !== 'live') return {
+                state: [first.state, second.state].includes('invalid') ? 'invalid' :
+                    [first.state, second.state].includes('error') ? 'error' :
+                        [first.state, second.state].includes('unavailable') ? 'unavailable' :
+                            [first.state, second.state].includes('stale') ? 'stale' : 'waiting',
+                note: 'Requires both fresh ' + (d.id === 'boost' ? 'absolute and ambient pressure' :
+                    d.id === 'exhaust' ? 'DME electrical output readings; tester commands are not substituted' :
+                        d.id === 'gForce' ? 'lateral and longitudinal acceleration' :
+                            'crankshaft horsepower and reported transfer-case torque share') };
             if (Math.abs(a.at - b.at) > d.maxSkewMs) return { state: 'stale', note: 'Input deliveries are too far apart' };
+            if (d.id === 'gForce') {
+                if (first.unit !== 'g' || second.unit !== 'g' || !Number.isFinite(first.value) || !Number.isFinite(second.value)) {
+                    return { state: 'invalid', note: 'Combined acceleration requires both axes in g' };
+                }
+                if (now - a.at > d.staleMs || now - b.at > d.staleMs) {
+                    return { state: 'stale', note: 'Acceleration delivery is too old' };
+                }
+                return { state: 'live', value: Math.hypot(first.value, second.value), unit: 'g',
+                    lateral: first.value, longitudinal: second.value,
+                    quality: 'Combined lateral and longitudinal acceleration; local delivery skew ' + Math.abs(a.at - b.at) + ' ms' };
+            }
+            if (d.id === 'frontPower' || d.id === 'rearPower') {
+                if (first.unit !== 'hp' || second.unit !== '%' || !Number.isFinite(first.value) ||
+                    !Number.isFinite(second.value) || second.value < 0 || second.value > 100) {
+                    return { state: 'invalid', note: 'Axle power requires horsepower and a supported 0-100 torque share' };
+                }
+                if (now - a.at > d.staleMs || now - b.at > d.staleMs) {
+                    return { state: 'stale', note: 'Engine power or torque-share delivery is too old' };
+                }
+                const rear = second.value / 100;
+                return { state: 'live', value: first.value * (d.id === 'rearPower' ? rear : 1 - rear), unit: 'hp',
+                    quality: 'Estimated crankshaft HP allocated by reported torque share; assumes equal axle speeds and no drivetrain losses, not measured axle HP' };
+            }
             if (d.id === 'exhaust') return { state: 'live', value: first.value === second.value ? first.value : 'MIXED',
-                quality: 'Both DME command bands; mechanical flap position unmeasured' };
+                quality: 'Both current DME electrical output bands; mechanical flap position unmeasured' };
             if (first.unit !== 'hPa' || second.unit !== 'hPa' || now - a.at > d.staleMs || now - b.at > d.staleMs) {
                 return { state: 'stale', note: 'Boost requires fresh pressure readings in hPa' };
             }
-            return { state: 'live', value: (first.value - second.value) * 0.014503773773020923, unit: 'psi',
-                quality: 'Actual pre-throttle minus measured ambient pressure; local delivery skew ' + Math.abs(a.at - b.at) + ' ms' };
+            return { state: 'live', value: Math.max(0, (first.value - second.value) * 0.014503773773020923), unit: 'psi',
+                quality: 'Actual pre-throttle minus measured ambient pressure, floored at zero; local delivery skew ' + Math.abs(a.at - b.at) + ' ms' };
         }
         const rpm = this.readings.rpm, torque = this.readings.torque;
         const speed = this.state(definitionsById.rpm);
@@ -111,6 +153,7 @@ class Model {
             r.raw = {};
             d.dependsOn.forEach((id, index) => { r.raw[id] = { value: inputs[index].raw, receivedAt: inputs[index].at || null }; });
             r.decoded = this.derivedValue(d, now);
+            if (d.preferred && r.sourceId !== r.decoded.sourceId) { this.gap(r); r.sourceId = r.decoded.sourceId; }
             if (r.decoded.state !== 'live') { this.gap(r); return; }
             // Only a new input delivery creates a derived sample.
             const signature = d.id === 'horsepower' && this.readings.rpm.decoded.value === 0 ?
@@ -147,7 +190,7 @@ class Model {
     }
     snapshot(d) {
         const r = this.readings[d.id], now = Date.now(), current = this.state(d);
-        return this.storage.snapshot({ schemaVersion: 1, savedAt: now, definitionVersion: 5,
+        return this.storage.snapshot({ schemaVersion: 1, savedAt: now, definitionVersion: 7,
             signal: { id: d.id, name: d.name, category: d.page, group: d.group, kind: d.kind,
                 interface: d.source ? D.IF[d.source] : null, instance: d.instance || '1',
                 field: d.field || null, member: d.member || null, sourceLead: d.lead || null,

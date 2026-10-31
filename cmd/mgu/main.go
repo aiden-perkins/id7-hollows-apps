@@ -130,7 +130,7 @@ func (a *application) run(args []string) error {
 }
 
 func (a *application) help() {
-	fmt.Fprintln(a.out, "Hollows MGU wrapper: upstream apps plus local MGU Lab, Ambient Lighting, Live Data Viewer and Trip Data")
+	fmt.Fprintln(a.out, "Hollows MGU wrapper: upstream apps plus local app overrides")
 	fmt.Fprintln(a.out, "\nUsage: mgu [global options] COMMAND [arguments]")
 	fmt.Fprintln(a.out, "\n  apps                              List source apps")
 	fmt.Fprintln(a.out, "  build [APP ...]                   Build app bundles (all apps by default)")

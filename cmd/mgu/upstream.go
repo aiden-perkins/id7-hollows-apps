@@ -27,8 +27,9 @@ func (a *application) checkUpstream() error {
 }
 
 func (a *application) isUpstreamApp(id string) bool {
-	// Local apps take precedence even if upstream later adds their namesakes.
-	return id != "mgu_lab" && id != "lighting_lab" && id != "xdrive_lab" && id != "touchscreen_lab" && id != "ambient_lighting" && id != "live_data_viewer" && id != "trip_data" && id != "other_data_lab"
+	// Only a local manifest overrides upstream; asset-only folders do not.
+	info, err := os.Stat(filepath.Join(a.root, "apps", id, "app.json"))
+	return err != nil || !info.Mode().IsRegular()
 }
 
 func (a *application) appManifest(id string) string {

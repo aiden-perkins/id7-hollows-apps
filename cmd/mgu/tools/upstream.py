@@ -9,7 +9,11 @@ import sys
 import tempfile
 
 sys.dont_write_bytecode = True
-LOCAL_APPS = {'mgu_lab', 'lighting_lab', 'xdrive_lab', 'touchscreen_lab', 'ambient_lighting', 'live_data_viewer', 'trip_data', 'other_data_lab'}
+
+def app_source(args, app):
+    local = args.root / 'apps' / app
+    return local if (local / 'app.json').is_file() else args.upstream / 'apps' / app
+
 
 
 def load_tool(upstream, name):
@@ -72,26 +76,31 @@ class RuntimeOverlay:
         destination.write_bytes(text.encode('utf-8'))
         if source.name == 'mgu.js':
             shutil.copy2(self.root / 'cmd' / 'mgu' / 'extensions' / 'runtime' / 'setting_units.js', destination.parent / 'setting_units.js')
+        if source.name == 'display.js':
+            shutil.copy2(self.root / 'cmd' / 'mgu' / 'extensions' / 'runtime' / 'swipe.js', destination.parent / 'swipe.js')
         return str(destination)
 
 
 def build(args):
     module = load_tool(args.upstream, 'build')
-    source = (args.root if args.app in LOCAL_APPS else args.upstream) / 'apps' / args.app
+    source = app_source(args, args.app)
+    local = source == args.root / 'apps' / args.app
     spec = json.loads((source / 'app.json').read_text(encoding='utf-8'))
     spec.setdefault('id', args.app)
     module.ROOT = str(args.root)
     module.DIST = str(args.root / 'dist')
     module.SDK = str(args.root / 'bmw-extracted' / 'oap-sdk')
     module.KIT = str(args.upstream / 'kit')
-    module.shutil = RuntimeOverlay(args.root, args.upstream, args.app in LOCAL_APPS)
+    module.shutil = RuntimeOverlay(args.root, args.upstream, local)
     (args.root / 'out').mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='mgu-source-', dir=str(args.root / 'out')) as work:
         apps = Path(work) / 'apps'
         app = apps / args.app
         app.parent.mkdir(parents=True)
         shutil.copytree(source, app)
-        if args.app not in LOCAL_APPS:
+        if local and args.app == 'live_data_viewer':
+            shutil.copy2(args.upstream / 'apps' / 'car_vitals' / 'demo.js', app / 'vitals_demo.js')
+        if not local:
             copy_app_data(args.root / 'apps' / args.app, app, spec)
         copy_app_data(args.root / 'bmw-extracted' / args.app, app, spec)
         module.APPS = str(apps)
@@ -183,7 +192,7 @@ def kit(args):
     with tempfile.TemporaryDirectory(prefix='mgu-kit-', dir=str(output)) as work:
         # The kit tool reads manifests here; implementation stays in upstream.
         for app in args.apps:
-            source = (args.root if app in LOCAL_APPS else args.upstream) / 'apps' / app / 'app.json'
+            source = app_source(args, app) / 'app.json'
             destination = Path(work) / 'apps' / app / 'app.json'
             destination.parent.mkdir(parents=True)
             shutil.copy2(source, destination)

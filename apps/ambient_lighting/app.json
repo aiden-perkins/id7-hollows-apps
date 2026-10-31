@@ -1,0 +1,47 @@
+{
+  "id": "ambient_lighting",
+  "title": "Ambient Lighting",
+  "description": "Assign factory ambient color presets to every driving mode and enable automatic following",
+  "version": "1.0.0",
+  "vendor": "custom",
+  "loggingId": "OA9J",
+  "iconGlyph": "AMB",
+  "signals": {
+    "de.bmw.infotainment.drivingexcitement.FES": {
+      "_instances": "1",
+      "statusFESVehicleDynamicSwitchHMI": "rs"
+    },
+    "de.bmw.infotainment.misc.ComfortFunctionIuK": {
+      "_instances": "1",
+      "ambientLightInteriorColour": "w",
+      "statusAmbientLightInteriorColour": "rs"
+    }
+  },
+  "screens": [
+    {
+      "name": "MAIN",
+      "kind": "list",
+      "title": "Driving-mode ambient lighting",
+      "items": [
+        ["button", "ENABLE", "Enable driving-mode lighting"],
+        ["text", "CURRENT", "Current mode: Waiting for vehicle"],
+        ["text3", "STATUS", "Disabled - choose a mode to assign a color"],
+        ["twocol", "MODE_LIST", "Driving mode", "Ambient color"],
+        ["text3", "HELP", "Tap a mode to choose its color. All catalog modes are listed; only those fitted to your car can occur. Unassigned modes leave the lighting unchanged. Following continues in the background while this app is running."]
+      ]
+    },
+    {
+      "name": "COLORS",
+      "kind": "list",
+      "title": "Choose ambient color",
+      "parent": "MAIN",
+      "items": [
+        ["text3", "COLOR_TITLE", "Ambient color"],
+        ["button", "USE_CURRENT", "Assign current vehicle color"],
+        ["button", "COLOR_LIST", "Leave unchanged"],
+        ["text3", "COLOR_HELP", "Colors 1-12 are the car's factory menu slots, not invented color names. To identify one, choose a color in BMW lighting settings with following disabled, then use Assign current vehicle color. Brightness, on/off and dynamic lighting are left unchanged."],
+        ["button", "COLORS_BACK", "Back without changing"]
+      ]
+    }
+  ]
+}

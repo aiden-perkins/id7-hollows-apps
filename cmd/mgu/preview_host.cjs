@@ -209,6 +209,9 @@ async function initialize(config) {
             proxy: unavailable, onAvailable: unavailable, on: unavailable, get: unavailable, set: unavailable, call: unavailable,
         },
         controller: { grab(on) { display.grab(on); }, onInput(fn) { display.onCcu = fn; } },
+        onTab: (fn) => { display.onTab = fn; },
+        onTap: (fn) => { display.onTap = fn; },
+        onLayout: (fn) => display.onLayout(fn),
         loop: (name, fps, fn) => { loops[name] = fn; return { stop() {}, kick() {} }; },
     };
     const settingValues = (s) => s.type === 'choice' ? (s.options || []).map((o) => o[0]) : s.type === 'number' ? s.steps || [] : null;
@@ -227,13 +230,12 @@ async function initialize(config) {
             } else native.cells(name, 0, { Text1stRow: s.label, Text2ndRow: settings.display(s.key) });
         }
     };
-    for (const s of spec.settings || []) {
-        ui.onClick('SET_' + s.key.toUpperCase(), (event) => {
-            const values = settingValues(s);
-            if (values) { if (values[event.row] !== undefined) settings.set(s.key, values[event.row]); }
-            else settings.cycle(s.key);
-        });
-    }
+    const settingsMatch = source.match(/function wireSettings\(ctx\) \{[\s\S]*?\n}\n/);
+    if (!settingsMatch) throw new Error('Built runtime does not contain the expected settings wiring');
+    const wireSettings = new Function('listSheet', 'SPEC', settingsMatch[0] + '\nreturn wireSettings;')(
+        require(path.join(kitDir, 'sheet')).listSheet, spec
+    );
+    await invoke(() => wireSettings(ctx));
     settings.onChange(refreshSettings); refreshSettings();
     const fixture = config.fixture ? require(config.fixture) : null;
     if (fixture && fixture.setup) fixture.setup(ctx);
