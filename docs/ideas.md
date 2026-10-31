@@ -1,7 +1,5 @@
 # random
-- make upstream apps use old icons, dunno when it changed
 - get new icons for my apps
-- swipe to swap tabs?
 - that dark red replaced with teal was the red warning light - swap teal and red
 
 # research items
@@ -15,10 +13,6 @@ this is the data available to look through:
 - anything else you may find, try your best
 
 the goal is to read what I wrote and make a markdown file outlining your findings, then after that create a lab app that specifically tests your findings, so it can be refined and polished later but debugged initially  
-
-## 2wd/4wd mxdrive converting - testing - upstream
-- be able to convert through an app
-- is this just fully releasing the tc clutch?
 
 ## phone connection
 - can I access phone connection? bluetooth?
@@ -77,9 +71,3 @@ go build -buildvcs=false -o out/mgu.exe ./cmd/mgu
 - rpm, torque, boost, power guages
 - exhaust valve controls
 - coolant temp, oil temp, transmission temp
-
-
-# AI TODO:
-- list all upstream data sources in a md file
-- list all data sources found in the out folder from labs in md file
-- 
