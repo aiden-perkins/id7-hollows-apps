@@ -128,6 +128,10 @@ class Services {
         }
         return this.model.snapshot(d);
     }
+    async setExhaust(mode) {
+        if (this.closed) throw new Error('Vehicle services closed');
+        return this.diagnostic.setExhaust(mode);
+    }
     close() {
         this.closed = true; clearInterval(this.timer);
         this.diagnostic.close();

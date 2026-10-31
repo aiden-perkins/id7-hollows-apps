@@ -4,16 +4,18 @@ const D = require('./definitions');
 
 const units = {
     rpm: 'rpm', speed: 'mph', boost: 'psi', torque: 'lb-ft', horsepower: 'hp',
-    brakePressure: 'bar', accelerator: '%', steering: 'deg', frontAxle: 'deg', gLat: 'g', gLong: 'g', altitude: 'ft',
+    brakePressure: 'bar', accelerator: '%', steering: 'deg', frontAxle: 'deg', rearAxle: 'deg', gLat: 'g', gLong: 'g', altitude: 'ft',
     voltage: 'V', tankTotal: 'L', tankLeft: 'L', tankRight: 'L',
     oil: 'F', coolant: 'F', transmission1: 'F', transmission2: 'F', converter: 'F',
     iatBank1: 'F', iatBank2: 'F', outside: 'F', chargeAir: 'F', cabin: 'F',
+    chargeCoolerCoolant: 'F', exhaustBank1: 'F', exhaustBank2: 'F', catalystBank1: 'F', catalystBank2: 'F',
+    transferCase: 'F', rearDifferential: 'F', frontPower: 'hp', rearPower: 'hp',
     oilPressure: 'psi', transmissionPressure: 'psi', fuelHighActual: 'psi', fuelHighTarget: 'psi', fuelLowActual: 'psi', fuelLowTarget: 'psi',
 };
 const wheels = ['FLH', 'FRH', 'RLH', 'RRH'];
-wheels.forEach((wheel) => { units['pressure' + wheel] = 'psi'; units['target' + wheel] = 'psi'; units['tyreTemp' + wheel] = 'F'; });
+wheels.forEach((wheel) => { units['pressure' + wheel] = 'psi'; units['target' + wheel] = 'psi'; units['tyreTemp' + wheel] = 'F'; units['wheelSpeed' + wheel] = 'mph'; });
 for (let cylinder = 1; cylinder <= 8; cylinder++) {
-    units['timingCorrection' + cylinder] = 'deg'; units['misfire' + cylinder] = 'count'; units['knock' + cylinder] = 'count';
+    units['timingCorrection' + cylinder] = 'deg'; units['misfire' + cylinder] = 'count'; units['knock' + cylinder] = 'V*ms';
 }
 
 // Upstream's drive supplies motion/powertrain; other channels are illustrative only.
@@ -47,27 +49,36 @@ class Demo {
             rpm: data.rpm, speed: data.speed / 1.609344, boost: data.throttle * 22,
             torque: data.torque * 0.7375621492772656, horsepower: data.torque * data.rpm * (2 * Math.PI / 60) / 745.6998715822702,
             brakePressure: Math.max(0, -data.gLong) * 70, accelerator: data.throttle * 100,
-            steering: data.gLat * 32, frontAxle: data.gLat * 4, gLat: data.gLat, gLong: data.gLong,
+            steering: data.gLat * 32, frontAxle: data.gLat * 4, rearAxle: -data.gLat * 0.8, gLat: data.gLat, gLong: data.gLong,
             altitude: 1240 + 160 * Math.sin(seconds / 90), voltage: 14.32 + wave * 0.12,
             tankTotal: tank, tankLeft: tank * 0.499, tankRight: tank * 0.501,
             oil: data.oil * 1.8 + 32, coolant: data.coolant * 1.8 + 32,
             transmission1: 185 + wave * 4, transmission2: 188 + Math.sin(seconds / 23) * 4, converter: 197 + wave * 5,
             iatBank1: 91 + data.throttle * 9, iatBank2: 94 + data.throttle * 8, outside: 68 + wave,
             chargeAir: 89 + data.throttle * 12, cabin: 72 + wave * 0.5,
+            chargeCoolerCoolant: 85 + data.throttle * 10, exhaustBank1: 650 + data.throttle * 450,
+            exhaustBank2: 665 + data.throttle * 440, catalystBank1: 790 + data.throttle * 380,
+            catalystBank2: 805 + data.throttle * 375, transferCase: 125 + wave * 5, rearDifferential: 140 + wave * 6,
+            frontPower: Math.max(0, data.torque * data.rpm / 7121) * 0.35,
+            rearPower: Math.max(0, data.torque * data.rpm / 7121) * 0.65,
+            exhaust: data.throttle > 0.5 ? 'OPEN' : 'CLOSED', exhaustRight: data.throttle > 0.5 ? 'OPEN' : 'CLOSED',
+            exhaustLeft: data.throttle > 0.5 ? 'OPEN' : 'CLOSED',
             oilPressure: 32 + data.rpm / 150, transmissionPressure: 72 + data.throttle * 18,
             fuelHighActual: highTarget + wave * 35, fuelHighTarget: highTarget, fuelLowActual: 74 + wave * 2, fuelLowTarget: 75,
-            gear: data.gear ? String(data.gear) : 'P', gearProgram: 'M', driveMode: 'SPORT EXPERT', traction: 'DSC ON',
+            driveMode: 'SPORT EXPERT', traction: 'DSC ON',
             parkingBrake: 'RELEASED', kickdown: data.throttle > 0.9 ? 'ENGAGED' : 'RELEASED',
             brakePedal: data.gLong < -0.1 ? 'PRESSED' : 'RELEASED',
         };
         wheels.forEach((wheel, index) => {
             values['pressure' + wheel] = 34.8 + index * 0.4 + wave * 0.1;
             values['target' + wheel] = 35; values['tyreTemp' + wheel] = 87 + index * 2 + wave * 2;
+            values['wheelSpeed' + wheel] = data.speed / 1.609344;
+            values['wheelDirection' + wheel] = data.speed > 0.1 ? 'FORWARD' : 'STANDSTILL';
         });
         for (let cylinder = 1; cylinder <= 8; cylinder++) {
             values['timingCorrection' + cylinder] = -(cylinder % 4) * 0.4 - data.throttle * 0.2;
             values['misfire' + cylinder] = cylinder === 6 ? Math.floor(seconds / 46) : 0;
-            values['knock' + cylinder] = cylinder === 3 ? Math.floor(seconds / 60) : cylinder === 7 ? Math.floor(seconds / 90) : 0;
+            values['knock' + cylinder] = 0.06 + cylinder * 0.009 + data.throttle * 0.04 + wave * 0.004;
         }
         Object.keys(this.readings).forEach((id) => {
             const value = values[id], r = this.readings[id];

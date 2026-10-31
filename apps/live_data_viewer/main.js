@@ -22,7 +22,7 @@ mgu.run({
         const shown = () => ui.isVisible('MAIN') && (!ui.hasFocus || ui.hasFocus('MAIN'));
         const tell = (message) => { state.notice = message; state.noticeUntil = Date.now() + 8000; immediate = true; changed(); };
         const action = (id, label, run) => ({ id, label, run });
-        const pageDefs = (page) => D.definitions.filter((d) => d.page === page || d.pages && d.pages.includes(page));
+        const pageDefs = (page) => D.definitions.filter((d) => d.id === 'driveMode' || d.page === page || d.pages && d.pages.includes(page));
         function collect(force) {
             if (!services) return;
             const ids = shown() ? pageDefs(state.page).map((d) => d.id) : [];
@@ -46,11 +46,27 @@ mgu.run({
             grabbed = false; refreshSettings();
             await ui.open('PREFERENCES'); collect(); changed();
         }
+        async function setExhaust(mode) {
+            if (demo) { tell('Exhaust control disabled in demo'); return; }
+            if (!services) throw new Error('Vehicle services unavailable');
+            await services.setExhaust(mode);
+            tell('Exhaust ' + mode.toUpperCase() + ' requested; physical flap position is not measured');
+        }
         const actions = [
             action('previous', 'Previous page', () => changePage(-1)),
             action('next', 'Next page', () => changePage(1)),
             action('settings', 'Settings', settings),
+            action('exhaustOpen', 'Valve open', () => setExhaust('open')),
+            action('exhaustClosed', 'Valve closed', () => setExhaust('closed')),
+            action('exhaustOEM', 'Valve OEM', () => setExhaust('oem')),
         ];
+        actions.forEach((item) => {
+            const run = item.run;
+            item.run = async () => {
+                try { await run(); } catch (e) { tell(e.message); ctx.log.warn(e); }
+                immediate = true; changed();
+            };
+        });
         function move(steps) {
             state.focus = (state.focus + steps % actions.length + actions.length) % actions.length;
             immediate = true; changed();
@@ -70,7 +86,7 @@ mgu.run({
             nativeText('PREF_TREND', 'Recent graph window: ' + model.settings.trendSeconds + ' seconds');
             nativeText('PREF_RATE', 'Other getter refresh: ' + model.settings.refreshMs + ' ms / display up to 60 FPS');
             nativeText('PREF_ORDER', 'Category order: ' + model.settings.order.map((id) => V.titles[id]).join(', '));
-            nativeText('PREF_NOTES', 'New samples render independently of getter refresh, up to 60 FPS with renderer backpressure. Pedal reads request 50 ms after each reply; actual rate depends on the ECU and shared diagnostic transport. Fuel: 5 seconds; battery: 2 seconds; TPMS: at least 5 seconds. Min/max cover this app session. Native accelerator raw-to-percent, kickdown and per-bank IAT sources remain unvalidated.');
+            nativeText('PREF_NOTES', 'Samples render independently of getter refresh, up to 60 FPS. Pedal reads target 50 ms between replies; ECU latency and the shared diagnostic queue limit the delivered rate. Brake is pressure, not pedal percent. Fuel: 5 seconds; battery: 2 seconds; TPMS: at least 5 seconds. Kickdown uses the EGS switch; parking brake uses Vehicle2. Exhaust shows electrical commands, not measured flap position. Exhaust and transfer-clutch temperatures include explicitly labelled models. Axle power, charge-cooler coolant and rear-diff temperature have no validated mapping. Min/max cover this app session.');
             nativeText('PREF_NOTICE', storage.error || state.noticeUntil > Date.now() && state.notice ||
                 (demo ? 'SIMULATED DATA. Demo values and metadata are separate from live vehicle readings.' : ''));
         }
@@ -168,7 +184,7 @@ mgu.run({
             dirty = false; immediate = false; lastDraw = now;
             await ui.image('MAIN_GFX', V.draw(ctx, Object.assign({}, state, { model: demo || model, actions, demo: !!demo,
                 focused: actions[state.focus].id,
-                notice: storage.error || (state.noticeUntil > now ? state.notice : '') || (demo ? 'SIMULATED DATA' : '') })));
+                notice: storage.error || (state.noticeUntil > now ? state.notice : '') })));
         });
         refreshSettings(); syncController(); collect(); changed();
     },

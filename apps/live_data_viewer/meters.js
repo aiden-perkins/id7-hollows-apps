@@ -60,7 +60,6 @@ function dial(cv, t, vm, id, title, x, color) {
     const range = supported && !nonnegative ? bounds(vm, id, ref.slice(0, 2), ref[2]) : ref;
     const top = vm.contentTop, bottom = vm.contentBottom, cx = x + 142, cy = top + (bottom - top - 40) / 2;
     const angle = (v) => -130 + 260 * clamp((v - range[0]) / (range[1] - range[0]), 0, 1);
-    text(cv, title, cx, top + 27, 250, 28, t.text, { align: 'center', font: 'bold' });
     cv.arc(cx, cy, 118, 130, -130, 130, t.track);
     cv.arc(cx, cy, 108, 113, -130, 130, t.track);
     for (let i = 0; i <= 20; i++) {
@@ -86,6 +85,7 @@ function dial(cv, t, vm, id, title, x, color) {
     const readoutSize = Math.min(74, 74 * 248 / Math.max(1, cv.textWidth(readout, 74, readoutOptions)));
     cv.text(readout, cx, cy + 43, readoutSize, ink(t, s, color), readoutOptions);
     text(cv, supported ? unit : d.unit ? 'UNIT UNCONFIRMED' : defaults[id] + ' / SCALE', cx, cy + 91, 248, 22, t.dim, { align: 'center' });
+    text(cv, title, cx, cy + 119, 250, 22, t.text, { align: 'center', font: 'bold' });
     const signalStatus = status(vm, id), scaleStatus = n !== null && n > range[1] ? 'ABOVE SCALE' : '';
     text(cv, [scaleStatus, signalStatus].filter(Boolean).join(' / '), cx, cy + 136, 268, 14, ink(t, s, color), { align: 'center' });
     const extrema = 'MIN ' + fmt(min, id === 'boost' ? 1 : 0) + '   MAX ' + fmt(max, id === 'boost' ? 1 : 0);

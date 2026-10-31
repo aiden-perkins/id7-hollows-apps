@@ -1,6 +1,7 @@
 # random
 - make upstream apps use old icons, dunno when it changed
 - get new icons for my apps
+- swipe to swap tabs?
 
 # research items
 I have some deep research items in ideas.md, i want you to take a look at the "" and do a deep research for it using reverse engineer anything. 
@@ -18,17 +19,16 @@ the goal is to read what I wrote and make a markdown file outlining your finding
 - be able to convert through an app
 - is this just fully releasing the tc clutch?
 
-## full exterior light control - testing
+## full exterior light control - testing - done
 - turn on high beams, DRLs, parking light, rear tail lights, license plate like, etc from app
 - see if this can work > 15 mph
 - rename ambient lighting profiles + fully be able to change the lighting colors through an app - dont have to code ncds
 
-## recieve touch screen events - testing
-- be able to see touch screen events and make uis so much better
-- swiping and clicking
+## recieve touch screen events - testing - done
+- implemented in upstream
 
-## other data to be found - testing
-- exhaust valve position
+## other data to be found - testing - data recorded
+- exhaust valve position - implemented in upstream
 - transfer case clutch power/percent/engaged amount? whats sent to the front wheels
 - individual wheel speed and direction
 - rear wheel steering degrees
@@ -89,12 +89,25 @@ go build -buildvcs=false -o out/mgu.exe ./cmd/mgu
 
 
 ## live data viewer 
-- check colors & check data
+- Colors should match the current driving mode:
+* red/blue for sport
+* orange/bronze/yellow for comfort
+* blue/teal/pruple/green for eco
+
 
 ### driving
-- maybe switch the guages to horizontal bars
-- make the fuel  item better, 2 digits maybe
-- make the battery thing look better
+- make the fuel text fit and look better, the total fuel in gallons should be center and big, left to the left and smaller, right to the right and smaller, and L total should be above total G, make left and right in G not L
+- battery text is good and layout good just theres empty space so make the battery smaller and move it to where its belowthe min/max numbers
+- move the titles for the boost/torque to below the units
+- remove gear, driving mode, and rpm items
+- the kickdown doesnt work so inspect and find out why, same with parking break doesnt work
+- the accel pedal/brake pedal percents update slowly, any way to update faster?
+- add current exhaust valve if its open or closed, and 3 buttons, open, closed, oem - check upstream
+- make the mini car bigger, remove steering wheel and add centerlines to the front wheels and make the wheels match the steering wheel
+- make the rear steering wheels also move, use the data in out/
+- add invidiual wheel speed and direction to the mini car too
+- also add the power being sent to front wheels & also rear wheels
+
 
 ### temperatures
 - charge-cooler coolant, per-bank exhaust/catalyst temperatures, and transfer-case/rear-differential

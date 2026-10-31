@@ -4,10 +4,11 @@ const D = require('./domain');
 const { Store } = require('./storage');
 const { Lab } = require('./lab');
 const { Services } = require('./services');
+const View = require('./view');
 
 mgu.run({
     async start(ctx) {
-        const ui = ctx.ui, store = new Store(ctx.dataDir);
+        const ui = new View(ctx), store = new Store(ctx.dataDir);
         const visible = {}, cache = {}, counts = {}, enabledCache = {};
         let closed = false, refreshTimer = null, hideTimer = null, clock = null, actionBusy = false;
         let selectedService = D.SERVICES[0].key, selectedField = null, selectedEvent = false;
@@ -31,8 +32,8 @@ mgu.run({
             ['DB32 and ECU limitations', 'LMV_G11 (0x19), VIP_G05 (0x39), IB_G05 (0x29) and GSD_F90 (0x0F) are local historical lookup hints, not current ECU identity. A positive reply must match ECU, SID and echoed DID; timeout, late and unattributed traffic are not successful matches. DB32 torque numbers are explicitly unvalidated Nm candidates. Raw actual/target/qualifier fields remain evidence, never a clutch-open inference.'],
             ['Guided ISTA workflow', 'Use Protocol for read-only baseline, manual stock FES/DSC comparisons, guided external ISTA work, transport mapping, native trials and lifecycle/thermal research. The app cannot run diagnostic clutch actuations. Perform any permitted external ISTA procedure using its actual documented tooling; record before/after markers, warnings and stage outcomes here. Stage outcomes are operator claims, not automatic acceptance. Never infer persistent mode support from one ignition cycle or an unloaded torque reading.'],
             ['Recording, retention and export', 'Every delivered sample is recorded with source, wall/monotonic time, sequence/session and provider epoch. Getter, notification and event counts are separate. Observed inter-arrival gaps are not packet-loss estimates. Snapshots do not feed historical samples into live gates. Recorder status exposes queuing, drops, errors, rotations and evictions; export includes retained raw files and counters, not an unlimited history promise. Recording errors disarm and block native writes. Export files remain on the app host/data directory; shown paths are not automatic uploads.'],
-            ['Preview, visibility and shutdown', 'Preview is strictly read-only: no real proxies, diagnostic traffic, arming or native writes, even with injected observations. Native screen transitions use whole-app visibility debounce. A truly hidden app disarms but continues read-only subscriptions/recording. Shutdown closes services then flushes the lab; there are no automatic vehicle commands. Reconnect is explicit and blocked while a trial is unresolved.'],
-            ['Raw fields and schema', 'All 14 providers and 42 fields are listed with exact interface, instance and catalog getter/notification permissions. Notification-only fields cannot be actively read. Field schema includes the full reachable datatype closure and catalog source hash. Complete JSON views are paginated without clipping the payload; use Previous/Next. Dynamic field evidence is live; saved baselines and snapshots remain historical. Full catalog, diagnostics, events and recorder status have separate raw views.']
+            ['Preview, visibility and shutdown', 'Preview is strictly read-only: no real proxies, diagnostic traffic, arming or native writes, even with injected observations. Hiding the canvas disarms; moving between lab sections does not hide the app. A hidden app continues read-only subscriptions/recording. Shutdown closes services then flushes the lab; there are no automatic vehicle commands. Reconnect is explicit and blocked while a trial is unresolved.'],
+            ['Raw fields and schema', 'All 14 providers and 42 fields are listed with exact interface, instance and catalog getter/notification permissions. Notification-only fields cannot be actively read. Field schema includes the full reachable datatype closure and catalog source hash. Settings-style lists support touch scrolling and rotary navigation. Long text wraps to measured lines; raw JSON remains paginated with Previous/Next. Dynamic field evidence is live; saved baselines and snapshots remain historical.']
         ];
         const json = (value) => value === undefined ? 'No value received' : JSON.stringify(value, null, 2);
         const brief = (value, max) => D.rawSummary(value, max || 260);
@@ -299,13 +300,7 @@ mgu.run({
                 text('RAW_TITLE', rawTitle);
                 text('RAW_POSITION', 'Page ' + (rawPage + 1) + ' / ' + pages + ' | characters ' + (rawPage * pageSize + 1) +
                     '..' + Math.min(rawText.length, (rawPage + 1) * pageSize) + ' of ' + rawText.length + (rawLive ? ' | LIVE view' : ' | fixed view'));
-                const rawLines = [];
-                rawText.slice(rawPage * pageSize, (rawPage + 1) * pageSize).split('\n').forEach((line) => {
-                    const characters = Array.from(line);
-                    if (!characters.length) rawLines.push('');
-                    for (let at = 0; at < characters.length; at += 48) rawLines.push(characters.slice(at, at + 48).join(''));
-                });
-                rows('RAW_BODY', rawLines);
+                rows('RAW_BODY', rawText.slice(rawPage * pageSize, (rawPage + 1) * pageSize).split('\n'));
                 enabled('RAW_PREV', rawPage > 0); enabled('RAW_NEXT', rawPage < pages - 1);
             }
             if (visible.HELP) {

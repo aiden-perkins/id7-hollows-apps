@@ -1,6 +1,14 @@
 'use strict';
 const C = { blue: '#81c4ff', cyan: '#4e9fdf', amber: '#ffbd69', red: '#ff565c',
     series: ['#81c4ff', '#4e9fdf', '#b6ddff', '#5d82a8'] };
+function palette(mode) {
+    const value = mode && mode.state === 'live' && !mode.retained ? String(mode.value) : '';
+    const colors = /^SPORT/.test(value) ? ['#ff565c', '#81c4ff', '#b6ddff', '#4e9fdf'] :
+        /^ECO/.test(value) ? ['#5bdacb', '#68aaff', '#ae8fea', '#86d590'] :
+        /^COMFORT|^ADAPTIVE/.test(value) ? ['#ffb44f', '#cd9468', '#ffe08a', '#df843d'] :
+        ['#81c4ff', '#4e9fdf', '#b6ddff', '#5d82a8'];
+    C.blue = colors[0]; C.cyan = colors[1]; C.series = colors;
+}
 function text(cv, str, x, y, width, size, color, options) {
     let s = String(str == null ? '' : str);
     const opts = options || {};
@@ -38,7 +46,7 @@ function plot(cv, t, vm, box, series, options) {
     if (o.title) text(cv, o.title, x + 14, y + 21, w - 100, 17, t.text, { font: 'bold' });
     const seconds = vm.model.settings.trendSeconds, now = Date.now(), start = now - seconds * 1000;
     text(cv, seconds + 's', x + w - 14, y + (header ? 21 : h - 9), 70, 12, t.dim, { align: 'right' });
-    const legend = sidebar ? Math.min(196, w * 0.32) : 0;
+    const legend = sidebar ? (o.legendWidth || Math.min(196, w * 0.32)) : 0;
     const left = x + legend + 42, top = y + (header ? 35 : 25), width = w - legend - 58, height = h - (header ? 60 : 50);
     const traceWidth = Math.max(16, width - (session ? Math.max(64, 20 + series.length * 10) : 0));
     let low = Infinity, high = -Infinity, hasPoints = false, hasSession = false;
@@ -88,7 +96,7 @@ function plot(cv, t, vm, box, series, options) {
             state.state !== 'live' ? state.state.toUpperCase() : '';
         if (sidebar) {
             cv.circle(x + 17, row + 7, 3, seriesColor);
-            text(cv, s.label || d.name, x + 26, row + 12, legend - 100, 14, t.text);
+            text(cv, s.label || d.name, x + 26, row + 12, legend - 124, 12, t.text);
             text(cv, fmt(n, 0) + (n !== null && d.unit ? ' ' + d.unit : ''), x + legend + 4, row + 12, 100, 22, c, { align: 'right', font: 'num' });
             const physical = calibrated(d);
             const extrema = physical && session ? 'MIN ' + fmt(r.min, 0) + '  MAX ' + fmt(r.max, 0) :
@@ -150,4 +158,4 @@ function plot(cv, t, vm, box, series, options) {
     text(cv, '-' + seconds + 's', left, y + h - 9, traceWidth / 2, 13, t.dim);
     text(cv, 'NOW' + (unit ? ' / ' + unit : ''), left + traceWidth, y + h - 9, traceWidth / 2 - 4, 13, t.dim, { align: 'right' });
 }
-module.exports = { C, text, get, numeric, fmt, ink, plot, thermalColor };
+module.exports = { C, palette, text, get, numeric, fmt, ink, plot, thermalColor };

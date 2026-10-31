@@ -4,7 +4,7 @@ const IF = {
     engine: 'de.bmw.infotainment.vehicle.CDS', speed: 'de.bmw.infotainment.vehicle.Vehicle2',
     mode: 'de.bmw.infotainment.drivingexcitement.FES', thermal: 'de.bmw.infrastructure.analytics.BasicDataSet',
     air: 'de.bmw.infrastructure.EnvironmentalInformation', accel: 'de.bmw.infotainment.vehicle.CDS2',
-    gps: 'de.bmw.infotainment.navigation.positioning.Positioning', gear: 'de.bmw.infrastructure.VehicleInformation',
+    gps: 'de.bmw.infotainment.navigation.positioning.Positioning',
     diagnostic: 'com.harman.infotainment.systemfunctions.tasu.tasu.InternalTasu', steering: 'de.bmw.infotainment.drivingexcitement.XView',
     tpms: 'de.bmw.infotainment.vehicle.TPMS',
     sensors: 'de.bmw.infotainment.vehicle.TPMSInternalData',
@@ -48,6 +48,13 @@ function candidate(id, name, page, group, source, field, member, invalidFrom, no
     if (converter) Object.assign(options, { numeric: true, unit: converter.unit });
     add(id, name, page, group, options);
 }
+function diagnostic(id, name, page, group, target, did, at, bytes, options) {
+    const opts = Object.assign({ decoder: 'diagnosticScalar', numeric: true, unit: '',
+        scale: 1, offset: 0, pollMs: 1000, staleMs: 5000 }, options);
+    const diag = Object.assign({ target, sid: 0x22, did, at, bytes, minBytes: at + bytes }, opts.diag);
+    candidate(id, name, page, group, 'diagnostic', id, 'value', null, opts.notes,
+        Object.assign(opts, { instance: 'SystemFunctionsInternalTasuInst1', diag }));
+}
 const thermalNote = 'BMW M Laptimer engine-temperature conversion: raw minus 48 degrees C, displayed in degrees F. Raw 255 is unavailable.';
 candidate('coolant', 'Coolant / engine water', 'temperatures', 'Engine', 'engine', 'statusEngineTemperature', 'temperatureEngineDrive', 255, thermalNote, { decoder: 'engineTemperature' });
 candidate('oil', 'Engine oil', 'temperatures', 'Engine', 'engine', 'statusEngineTemperature', 'temperatureEngineOilDrive', 255, thermalNote, { decoder: 'engineTemperature' });
@@ -70,33 +77,44 @@ candidate('brakePressure', 'Brake system pressure', 'driving', 'Driver inputs', 
 candidate('steering', 'Steering wheel angle', 'driving', 'Driver inputs', 'steering', 'statusSteeringAngleDriver', 'actualValueSteeringAngleDriver', 65535,
     'BMW SDK steeringAngleConverter: raw * 0.04395 - 1440.11 degrees, valid raw 3-65532. Only explicitly valid catalog qualifiers are accepted.',
     { decoder: 'steeringAngle', qualifier: 'qualifierActualValueSteeringAngleDriver', validQualifiers: qualifierEnums.steering });
-candidate('frontAxle', 'Front axle steering angle (raw)', 'driving', 'Driver inputs', 'steering', 'statusFrontAxleSteeringAngle', 'steeringAngleFrontAxleEffective', 65535,
-    'Raw front-axle angle field; no supported degree scale, center or sign conversion. This wrapper has no qualifier.', { decoder: 'unscaled' });
+diagnostic('frontAxle', 'Front axle effective steering angle', 'driving', 'Driver inputs', 0x12, 0x58C6, 0, 2, {
+    unit: 'deg', scale: 0.00274658, offset: -89.99725342, pollMs: 100,
+    notes: 'ISTA DME8FF_R SG_FUNKTIONEN STG_STATUS_LENKWV_IST: actual front-axle steering angle, unsigned BE16 * 0.00274658 - 89.99725342 degrees. No qualifier or reserved raw range is documented in this diagnostic row. No assumed steering-wheel ratio or individual wheel toe geometry.' });
+diagnostic('rearAxle', 'Rear axle actual steering angle', 'driving', 'Driver inputs', 0x2B, 0xDB33, 0, 2, {
+    unit: 'deg', scale: 0.002747, offset: -90, pollMs: 100,
+    diag: { minBytes: 11, validAt: 2, validValues: [1] },
+    notes: 'ISTA HSR_G11 RES_0XDB33_D: actual rear-actuator angle BE16 * 0.002747 - 90 degrees, qualifier at byte 2 must equal 1 (valid); 8 initializing and 6 invalid are not angles. Not individually measured wheel toe.' });
 candidate('accelerator', 'Accelerator pedal position', 'driving', 'Driver inputs', 'diagnostic', 'acceleratorPosition', 'value', null,
     'ISTA DME8FF_R for DME-88T0 N63TU3: IFPWG, UDS 22 480B, normalized pedal position; big-endian signed 16-bit * 0.01220703 percent. Only the physical 0-100 percent range is displayed.',
     { instance: 'SystemFunctionsInternalTasuInst1', decoder: 'diagnosticPedal', staleMs: 1500, pollMs: 50,
         diag: { target: 0x12, sid: 0x22, did: 0x480B, at: 0, bytes: 2, signed: true, minBytes: 2 } });
-candidate('gear', 'Gear / selector state', 'driving', 'Drivetrain', 'gear', 'DataPowerTrain2', 'statusGearSelectionDrive', 15,
-    'Catalog enum identifies P/R/N/NP and gears 1-9; this source is not established by saved Lab captures. Only recognized enums are displayed when received.', { read: false, decoder: 'gear', kind: 'reported' });
-add('gearProgram', 'Transmission D / S / M program', 'driving', 'Drivetrain', { notes: 'No independently validated transmission program source. Driving mode is a different signal.' });
 add('driveMode', 'Driving mode', 'driving', 'Drivetrain', { source: 'mode', field: 'statusFESVehicleDynamicSwitchHMI',
     member: 'actualValueModeDrivingExperience', read: true, decoder: 'mode', notes: 'Numeric and named wire enums are accepted. Seven variants were observed; invalid/reserved/initializing modes are rejected.' });
 add('traction', 'Traction / DSC mode', 'driving', 'Drivetrain', { source: 'mode', field: 'statusDSCSwitchHMI',
     member: 'displayStatusDSC2', read: true, decoder: 'traction',
     notes: 'Catalog-defined DSC display state. Provider availability on this car is unconfirmed. Independent of driving mode; invalid/reserved codes are rejected.' });
-add('parkingBrake', 'Parking brake', 'driving', 'Driver inputs', { source: 'engine', field: 'statusHandBrake',
-    member: 'statusContactHandBrake', read: true, decoder: 'parkingBrake', staleMs: 2000,
-    notes: 'BMW CDS contact enum: HANDBREMSE_ANGEZOGEN (2) applied, HANDBREMSE_GELOEST (1) released; NICHT_CODIERT (0) unavailable and SIGNAL_UNGUELTIG (3) invalid. Not the differently encoded Vehicle2 mechanical-parking-brake state.' });
-add('kickdown', 'Accelerator kickdown', 'driving', 'Driver inputs', {
-    notes: 'No decoded kickdown switch source or diagnostic mapping in the inspected catalog, SDK and ISTA extracts. Accelerator percentage, ECO efficiency-range enums and unnamed pedal bits do not establish kickdown engagement.' });
-add('brakePedal', 'Brake pedal switch', 'driving', 'Driver inputs', {
-    notes: 'Native statusBrakingDriver is a received but undocumented raw status, not an established pressed/released enum. No brake-switch source is decoded. The mini-car may show explicitly labelled fresh brake-pressure proxy evidence, never actual lamp feedback.' });
+add('parkingBrake', 'Parking brake', 'driving', 'Driver inputs', { source: 'speed', field: 'statusStandstillFunctions',
+    member: 'statusParkingBrake', read: true, decoder: 'parkingBrake', staleMs: 2000,
+    notes: 'BMW SDK AttributeMapping/TypeConverters uses Vehicle2.statusStandstillFunctions.statusParkingBrake: 0 mechanically released, 1 mechanically locked, 2 releasing, 4 locking. CDS statusHandBrake describes the mechanical handbrake contact, not this electric parking brake.' });
+diagnostic('kickdown', 'Accelerator kickdown switch', 'driving', 'Driver inputs', 0x18, 0xDA1F, 0, 2, {
+    decoder: 'binary', numeric: false, labels: ['RELEASED', 'ENGAGED'], pollMs: 100, staleMs: 2000,
+    notes: 'ISTA GSZF04GD SG_FUNKTIONEN EGS_KICK_DOWN: unsigned BE16 0=off, 1=on. This is the EGS switch state, never inferred from accelerator percentage. Live support depends on the installed EGS variant.' });
+diagnostic('brakePedal', 'Brake pedal switch', 'driving', 'Driver inputs', 0x29, 0xD9EF, 0, 1, {
+    decoder: 'binary', numeric: false, labels: ['RELEASED', 'PRESSED'], pollMs: 100, staleMs: 2000,
+    notes: 'ISTA IB_G05 RES_0XD9EF_D BLS_OUT: byte 0, 0=pedal not pressed, 1=pressed. Brake-system pressure is a separate quantity, never a pedal percentage.' });
 candidate('speed', 'Vehicle speed', 'driving', 'Motion', 'speed', 'statusCarSpeed2', 'speedVehicleCentreOfGravity', 65535,
     'BMW M Laptimer vehicle speed: raw / 64 km/h, converted to mph. Valid standstill zero is retained.', { decoder: 'speed' });
 candidate('rpm', 'Engine speed', 'driving', 'Drivetrain', 'engine', 'statusEngineSpeed2', 'actualValueRPMEngineCrankshaft', 65535,
     'BMW M Laptimer engine speed: raw / 4 rpm. Valid stopped-engine zero is retained.', { decoder: 'rpm' });
-candidate('boost', 'Boost pressure', 'driving', 'Drivetrain', 'mode', 'statusSwitchDriveDynamicSport2', 'displayBoostPressure', 255,
-    'Upstream explicitly labels the FES boost scale a best guess. Gauge versus absolute pressure and reference pressure are unconfirmed.');
+diagnostic('boostAbsolute', 'Pre-throttle absolute pressure', 'driving', 'Drivetrain', 0x12, 0x4205, 0, 2, {
+    unit: 'hPa', scale: 20 / 256, pollMs: 100, staleMs: 3000,
+    notes: 'ISTA DME8FF_R IPLAD: pressure before throttle, unsigned BE16 * 20 / 256 hPa absolute; range 0-5120 hPa.' });
+diagnostic('barometricPressure', 'Ambient absolute pressure', 'driving', 'Drivetrain', 0x12, 0x4201, 0, 2, {
+    unit: 'hPa', scale: 10 / 256, pollMs: 1000, staleMs: 5000,
+    notes: 'ISTA DME8FF_R IPUMG: ambient pressure unsigned BE16 * 10 / 256 hPa. No fixed sea-level substitute is used.' });
+add('boost', 'Boost pressure (gauge)', 'driving', 'Drivetrain', { kind: 'derived', numeric: true, unit: 'psi',
+    dependsOn: ['boostAbsolute', 'barometricPressure'], maxSkewMs: 2000, staleMs: 3000,
+    notes: 'Upstream Car Vitals gauge-pressure method: actual pre-throttle absolute pressure minus measured ambient pressure, converted hPa to psi. Negative differential retained; inputs must be fresh and within 2 seconds by local arrival time.' });
 candidate('torque', 'Actual crankshaft torque', 'driving', 'Drivetrain', 'mode', 'statusActualValueTorque2', 'actualValueTorqueCrankshaft', 4095,
     'BMW M Laptimer crankshaft torque: raw * 0.5 - 1023.5 Nm, converted to lb-ft. Negative engine-braking torque is retained.', { decoder: 'torque' });
 add('horsepower', 'Horsepower', 'driving', 'Drivetrain', { kind: 'derived', numeric: true, unit: 'hp', staleMs: 2000,
@@ -128,6 +146,41 @@ add('altitude', 'GPS altitude', 'driving', 'Motion', { source: 'gps', field: 'ra
     add('tyreState' + wheel, 'Reported wheel state', 'driving', group, Object.assign({
         notes: 'Saved aggregate tyre qualifiers do not identify an individual wheel state or sensor identity.' }, common));
 });
+['FLH', 'FRH', 'RLH', 'RRH'].forEach((wheel, index) => {
+    const diag = { minBytes: 19, qualityAt: 15 + index };
+    diagnostic('wheelSpeed' + wheel, 'Wheel speed ' + wheel, 'driving', 'Motion', 0x29, 0xDBE4, index * 2, 2, {
+        unit: 'mph', scale: 0.01 / 1.609344, pollMs: 100, staleMs: 2000,
+        diag: Object.assign({ signed: true }, diag),
+        notes: 'ISTA IB_G05 RES_0XDBE4_D: wheel-specific signed BE16 / 100 km/h, converted to mph. Own signal quality must be >50% and <=100%. Direction is independently reported, not inferred from gear or speed.' });
+    diagnostic('wheelDirection' + wheel, 'Wheel direction ' + wheel, 'driving', 'Motion', 0x29, 0xDBE4, 10 + index, 1, {
+        decoder: 'wheelDirection', numeric: false, pollMs: 100, staleMs: 2000, diag,
+        notes: 'ISTA IB_G05 TAB_DREHRICHTUNG: 0 standstill, 1 forward, 2 reverse; 3 undefined remains unavailable. Own wheel quality must be >50% and <=100%.' });
+});
+['frontPower', 'rearPower'].forEach((id, index) => add(id, (index ? 'Rear' : 'Front') + ' axle power', 'driving', 'Drivetrain', {
+    numeric: true, unit: 'hp', notes: 'No established axle-specific delivered torque, rotational-speed and gearing mapping. LMV DB32 torque qualifiers 12/27 remain unresolved; Powertrain wheel moment/RPM scales are unconfirmed. Clutch engagement alone cannot determine axle power or power split.' }));
+['Right', 'Left'].forEach((side, index) => diagnostic('exhaust' + side, side + ' DME exhaust command', 'driving', 'Exhaust', 0x12 + index, 0x62FD, 0, 2, {
+    decoder: 'exhaustCommand', numeric: false, diag: { signed: true }, pollMs: 1000,
+    notes: 'ISTA DME8FF_R/L ASW_EL_AGK and upstream live_adjustments: tester command BE16 / 100%. Only 8-12% OPEN and 88-92% CLOSED command bands recognized. This is NOT measured valve position. Saved right=10%, left=90% proves commands can differ.' }));
+add('exhaust', 'Exhaust command (both DMEs)', 'driving', 'Exhaust', { kind: 'derived',
+    dependsOn: ['exhaustRight', 'exhaustLeft'], staleMs: 5000, maxSkewMs: 2000,
+    notes: 'Aggregate only when both fresh DME command bands agree; asymmetric commands remain MIXED. Actual mechanical flap position is unmeasured.' });
+add('chargeCoolerCoolant', 'Charge-cooler coolant', 'temperatures', 'Charge cooling', {
+    numeric: true, unit: 'F', notes: 'No validated coolant sensor identified. DME 40E7/55DC report electric-pump temperature, not coolant temperature; F477 is charge air, not coolant. These are deliberately not substituted.' });
+[[1, 0x5896, 0.1, -273.14, true], [2, 0x5897, 0.0234375, -273.15, false]].forEach((item) =>
+    diagnostic('exhaustBank' + item[0], 'Post-catalyst exhaust model / bank ' + item[0], 'temperatures', 'Exhaust', 0x12, item[1], 0, 2, {
+        unit: 'F', scale: item[2] * 1.8, offset: item[3] * 1.8 + 32, diag: { signed: item[4] }, pollMs: 2000,
+        notes: 'ISTA DME8FF_R SG_FUNKTIONEN ' + (item[0] === 1 ? 'TEMP_NACH_KAT_MODELL' : 'STAT_0X5897_WERT') +
+            ': bank-labelled post-main-catalyst exhaust temperature MODEL, not a measured thermocouple. No source-defined sentinel or validity flag is documented in these rows; only temperatures below absolute zero are rejected. Shared PRG does not guarantee fitted software support.' }));
+[[1, 0x5079], [2, 0x50D6]].forEach((item) =>
+    diagnostic('catalystBank' + item[0], 'Catalyst gas temperature / bank ' + item[0], 'temperatures', 'Exhaust', 0x12, item[1], 0, 2, {
+        unit: 'F', scale: 0.18, offset: 32, diag: { signed: true }, pollMs: 2000,
+        notes: 'ISTA DME8FF_R ABGAS_TEMP_IM_KAT_ROH1' + (item[0] === 2 ? '_B2' : '') +
+            ': raw exhaust-gas temperature in catalyst monolith 1, explicitly bank-labelled, signed BE16 / 10 Celsius. No sentinel/validity flag documented: FFFF decodes to -0.1 C and cannot honestly be declared invalid from this row alone. Not catalyst substrate temperature; runtime support is not presumed.' }));
+diagnostic('transferCase', 'Transfer-case clutch lamella model', 'temperatures', 'Drivetrain', 0x19, 0x4004, 0, 4, {
+    unit: 'F', scale: 1.8 / 4194304, offset: 32, diag: { signed: true, minBytes: 59 }, pollMs: 5000,
+    notes: 'ISTA LMV_G11 RES_0X4004_D STAT_TMPBLADE: signed BE32 / 4194304 Celsius, simulated clutch-lamella temperature, not measured case/oil temperature. Saved real response reports 47.96875 C.' });
+add('rearDifferential', 'Rear-differential temperature', 'temperatures', 'Drivetrain', {
+    numeric: true, unit: 'F', notes: 'No validated rear-differential oil/case temperature source or fitted sensor mapping in the available vehicle evidence. Transfer-case clutch and ECU temperatures are not substituted.' });
 for (let i = 1; i <= 4; i++) {
     candidate('sensor' + i, 'Sensor slot ' + i + ' serial / ID', 'driving', 'Tires / TPMS: unknown positions',
         'sensors', 'tpmsInternalLastValues', 'tpmsInternalLastSensorSerNoId' + i, 2147483647,
@@ -150,10 +203,10 @@ for (let cylinder = 1; cylinder <= 8; cylinder++) {
             'Car Vitals OBD PID 0E / UDS F40E is cylinder-1 timing advance before TDC, not timing correction. ' +
             'Displayed observation peak is max(abs(session minimum), abs(session maximum)); no tuner limit is established.' });
     add('knock' + cylinder, 'C' + cylinder + ' knock', 'health', 'Cylinder knock', {
-        numeric: true, notes: identity +
-            'Requested per-cylinder knock channel; no validated sensor-versus-counter quantity, scale, source or both-DME cylinder mapping in the inspected evidence. ' +
-            'C5/C1 through C8/C4 is the requested display arrangement, not a proven physical orientation. ' +
-            'No guessed count, unit, zero or diagnostic request is supplied. A future validated peak is a largest observed value, not a summed event total.' });
+        numeric: true, unit: 'V*ms', notes: identity +
+            'ISTA DME8FF_R/L SPG_KLOPF_ZYL1..6 identifies voltage-time knock signal, unsigned BE32 * 0.05 / 65536 V*ms; fractional values are expected, not fractional event counts. ' +
+            'IUKZ1..6 is a different normalized reference level. Both-DME physical C1-C8 mapping is unresolved, so no guessed requests or per-cylinder values are supplied. ' +
+            'C5/C1 through C8/C4 is the requested display arrangement, not a proven physical orientation. Peaks are signal maxima, not summed events.' });
     add('misfire' + cylinder, 'C' + cylinder + ' misfire count', 'health', 'Cylinder misfires', {
         numeric: true, unit: 'count', notes: identity +
             'No validated count source on this dual-DME V8. Car Vitals probes OBD service 06 / UDS F6xx monitors from MID A2 ' +
@@ -164,7 +217,6 @@ for (let cylinder = 1; cylinder <= 8; cylinder++) {
 }
 const modeNames = { 1: 'SPORT_DYNAMIC', 2: 'SPORT_EXPERT', 3: 'SPORT_INDIVIDUAL', 4: 'COMFORT', 5: 'COMFORT_PLUS',
     6: 'COMFORT_INDIVIDUAL', 7: 'ECO_PRO_EFFICIENT', 8: 'ECO_PRO_PLUS', 9: 'ECO_PRO_INDIVIDUAL', 10: 'ADAPTIVE' };
-const gearNames = { 1: 'N', 2: 'R', 3: 'P', 4: 'NP', 5: '1', 6: '2', 7: '3', 8: '4', 9: '5', 10: '6', 11: '7', 12: '8', 13: '9' };
 const tractionNames = { 0: 'DSC_EIN', 1: 'DSC_AUS', 2: 'ANFAHRHILFE_AKTIV', 4: 'TRAKTIONSMODUS_EIN' };
 const tractionLabels = { DSC_EIN: 'DSC ON', DSC_AUS: 'DSC OFF', ANFAHRHILFE_AKTIV: 'START ASSIST', TRAKTIONSMODUS_EIN: 'TRACTION' };
 function decode(d, raw) {
@@ -183,18 +235,36 @@ function decode(d, raw) {
         return { state: 'invalid', note: 'Quality qualifier is not recognized as valid', quality: String(qualifier) };
     }
     if (d.decoder === 'parkingBrake') {
-        if (value === 2 || value === 'HANDBREMSE_ANGEZOGEN') return { state: 'live', value: 'APPLIED', quality: 'Recognized CDS handbrake contact enum' };
-        if (value === 1 || value === 'HANDBREMSE_GELOEST') return { state: 'live', value: 'RELEASED', quality: 'Recognized CDS handbrake contact enum' };
-        return { state: value === 0 || value === 'NICHT_CODIERT' ? 'unavailable' : 'invalid',
-            note: 'Parking-brake contact not coded, invalid or unrecognized' };
+        const states = { 0: 'RELEASED', 1: 'APPLIED', 2: 'RELEASING', 4: 'LOCKING',
+            PARKBREMSE_MECHANISCH_NICHT_FESTGESTELLT: 'RELEASED', PARKBREMSE_MECHANISCH_FESTGESTELLT: 'APPLIED',
+            PARKBREMSE_IM_STELLVORGANG_LOESEN: 'RELEASING', PARKBREMSE_IM_STELLVORGANG_FESTSTELLEN: 'LOCKING' };
+        return Object.prototype.hasOwnProperty.call(states, value) ? { state: 'live', value: states[value], quality: 'Vehicle2 mechanical parking-brake state' } :
+            { state: 'unavailable', note: 'Parking-brake interface unavailable, faulted or unfilled' };
     }
-    if (d.decoder === 'mode' || d.decoder === 'gear' || d.decoder === 'traction') {
-        const names = d.decoder === 'mode' ? modeNames : d.decoder === 'traction' ? tractionNames : gearNames;
+    if (d.decoder === 'binary') return value === 0 || value === 1 ?
+        { state: 'live', value: d.labels[value], quality: 'Documented diagnostic switch enum' } :
+        { state: 'invalid', note: 'Unrecognized switch value' };
+    if (d.decoder === 'wheelDirection') return value === 0 || value === 1 || value === 2 ?
+        { state: 'live', value: ['STANDSTILL', 'FORWARD', 'REVERSE'][value], quality: 'Independent wheel direction; own signal quality >50%' } :
+        { state: 'unavailable', note: 'Wheel direction undefined' };
+    if (d.decoder === 'exhaustCommand') {
+        const pct = value / 100;
+        return pct >= 8 && pct <= 12 || pct >= 88 && pct <= 92 ?
+            { state: 'live', value: pct <= 12 ? 'OPEN' : 'CLOSED', quality: 'Command band only; physical position unmeasured' } :
+            { state: 'unavailable', note: 'Exhaust command outside documented open/close bands; physical position unmeasured' };
+    }
+    if (d.decoder === 'diagnosticScalar') {
+        if (!Number.isSafeInteger(value) || d.invalidFrom != null && value >= d.invalidFrom) return { state: 'invalid', note: 'Invalid diagnostic scalar' };
+        const physical = value * d.scale + d.offset;
+        if (!Number.isFinite(physical) || d.unit === 'F' && physical < -459.67) return { state: 'invalid', note: 'Diagnostic temperature below absolute zero' };
+        return { state: 'live', value: physical, unit: d.unit, quality: 'Documented ISTA conversion; ' +
+            (d.diag.validAt !== undefined || d.diag.qualityAt !== undefined ? 'documented qualifier accepted' :
+                'no source-defined validity flag/sentinel established; positive response is not independent physical validation') };
+    }
+    if (d.decoder === 'mode' || d.decoder === 'traction') {
+        const names = d.decoder === 'mode' ? modeNames : tractionNames;
         let text = typeof value === 'number' ? names[value] : null;
-        if (typeof value === 'string') {
-            if (d.decoder !== 'gear' && Object.values(names).includes(value)) text = value;
-            if (d.decoder === 'gear' && /^(N|R|P|NP|_[1-9])$/.test(value)) text = value.replace('_', '');
-        }
+        if (typeof value === 'string' && Object.values(names).includes(value)) text = value;
         return text ? { state: 'live', value: d.decoder === 'traction' ? tractionLabels[text] : text.replace(/_/g, ' '), quality: 'Recognized reported enum' } :
             { state: 'invalid', note: 'Invalid, initializing, reserved or unsupported enum' };
     }

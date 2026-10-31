@@ -74,6 +74,20 @@ class Model {
     derivedValue(d, now) {
         const r = this.readings[d.id];
         if (!r.collecting) return { state: r.at ? 'stale' : 'waiting', note: 'Collection paused outside this page' };
+        if (d.id === 'boost' || d.id === 'exhaust') {
+            const ids = d.dependsOn, a = this.readings[ids[0]], b = this.readings[ids[1]];
+            const first = this.state(definitionsById[ids[0]]), second = this.state(definitionsById[ids[1]]);
+            if (first.state !== 'live' || second.state !== 'live') return { state: 'waiting',
+                note: 'Requires both fresh ' + (d.id === 'boost' ? 'absolute and ambient pressure' : 'DME command readings') };
+            if (Math.abs(a.at - b.at) > d.maxSkewMs) return { state: 'stale', note: 'Input deliveries are too far apart' };
+            if (d.id === 'exhaust') return { state: 'live', value: first.value === second.value ? first.value : 'MIXED',
+                quality: 'Both DME command bands; mechanical flap position unmeasured' };
+            if (first.unit !== 'hPa' || second.unit !== 'hPa' || now - a.at > d.staleMs || now - b.at > d.staleMs) {
+                return { state: 'stale', note: 'Boost requires fresh pressure readings in hPa' };
+            }
+            return { state: 'live', value: (first.value - second.value) * 0.014503773773020923, unit: 'psi',
+                quality: 'Actual pre-throttle minus measured ambient pressure; local delivery skew ' + Math.abs(a.at - b.at) + ' ms' };
+        }
         const rpm = this.readings.rpm, torque = this.readings.torque;
         const speed = this.state(definitionsById.rpm);
         if (speed.state !== 'live') return { state: speed.state, note: 'Power requires live crankshaft RPM: ' + (speed.note || speed.state) };
@@ -93,13 +107,14 @@ class Model {
     }
     updateDerived(now) {
         D.definitions.filter((d) => d.dependsOn && this.readings[d.id].collecting).forEach((d) => {
-            const r = this.readings[d.id], rpm = this.readings.rpm, torque = this.readings.torque;
-            r.raw = { rpm: { value: rpm.raw, receivedAt: rpm.at || null },
-                torque: { value: torque.raw, receivedAt: torque.at || null } };
+            const r = this.readings[d.id], inputs = d.dependsOn.map((id) => this.readings[id]);
+            r.raw = {};
+            d.dependsOn.forEach((id, index) => { r.raw[id] = { value: inputs[index].raw, receivedAt: inputs[index].at || null }; });
             r.decoded = this.derivedValue(d, now);
             if (r.decoded.state !== 'live') { this.gap(r); return; }
-            // An unmatched delivery is not a power sample. Stopped-engine samples need only new RPM.
-            const signature = rpm.decoded.value === 0 ? rpm.samples + ':stopped' : rpm.samples + ':' + torque.samples;
+            // Only a new input delivery creates a derived sample.
+            const signature = d.id === 'horsepower' && this.readings.rpm.decoded.value === 0 ?
+                this.readings.rpm.samples + ':stopped' : inputs.map((input) => input.samples).join(':');
             if (r.inputSignature === signature) return;
             if (r.at && now - r.at > d.staleMs) this.gap(r);
             r.inputSignature = signature; r.at = now; r.samples++;
@@ -132,7 +147,7 @@ class Model {
     }
     snapshot(d) {
         const r = this.readings[d.id], now = Date.now(), current = this.state(d);
-        return this.storage.snapshot({ schemaVersion: 1, savedAt: now, definitionVersion: 4,
+        return this.storage.snapshot({ schemaVersion: 1, savedAt: now, definitionVersion: 5,
             signal: { id: d.id, name: d.name, category: d.page, group: d.group, kind: d.kind,
                 interface: d.source ? D.IF[d.source] : null, instance: d.instance || '1',
                 field: d.field || null, member: d.member || null, sourceLead: d.lead || null,
