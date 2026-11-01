@@ -97,6 +97,6 @@ function policy(settings) {
         gear: 'Previous valid state holds for each bounded interval. Count only direct forward-gear changes; gaps/P/R/N/NP do not count as shifts.',
         elevation: 'First/last accepted altitude; ascent/descent use a deadband anchor, reset at gaps. Vertical speed is an unsmoothed adjacent-sample estimate.',
         duration: 'Monotonic recorded duration includes stationary periods and in-process sample gaps; recovery downtime is separate.',
-        capabilities: { speed: false, rpm: false, fuel: false, ignition: false, gps: true, gear: 'recognized enum when delivered' } };
+        capabilities: { speed: true, rpm: true, fuel: false, ignition: false, gps: true, gear: 'recognized enum when delivered' } };
 }
 module.exports = { bucket, create, accept, policy };

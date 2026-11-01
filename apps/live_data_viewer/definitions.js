@@ -6,7 +6,7 @@ const IF = {
     air: 'de.bmw.infrastructure.EnvironmentalInformation', accel: 'de.bmw.infotainment.vehicle.CDS2',
     gps: 'de.bmw.infotainment.navigation.positioning.Positioning',
     diagnostic: 'com.harman.infotainment.systemfunctions.tasu.tasu.InternalTasu', steering: 'de.bmw.infotainment.drivingexcitement.XView',
-    tpms: 'de.bmw.infotainment.vehicle.TPMS',
+    tpms: 'de.bmw.infotainment.vehicle.TPMS', vehicle: 'de.bmw.infotainment.vehicle.Vehicle',
     sensors: 'de.bmw.infotainment.vehicle.TPMSInternalData',
 };
 const definitions = [];
@@ -20,8 +20,8 @@ const converters = {
     ambient: { factor: 0.5, offset: -40, multiplier: 1.8, displayOffset: 32, unit: 'F', maxRaw: 251 },
     acceleration: { factor: 0.002, offset: -65, multiplier: 1 / 9.80665, unit: 'g', maxRaw: 65000 },
     torque: { factor: 0.5, offset: -1023.5, multiplier: 0.7375621492772656, unit: 'lb-ft' },
-    tyreTemperature: { factor: 1, offset: -40, multiplier: 1.8, displayOffset: 32, unit: 'F', maxRaw: 190 },
-    tyrePressure: { factor: 0.1, offset: 0, multiplier: 14.503773773020923, unit: 'psi', maxRaw: 60 },
+    tyreTemperatureRaw: { factor: 1, offset: -40, unit: 'vehicle temperature', maxRaw: 65531 },
+    tyrePressureRaw: { factor: 0.1, offset: 0, unit: 'vehicle pressure', maxRaw: 65531 },
     unscaled: { factor: 1, offset: 0, unit: 'raw' },
     steeringAngle: { factor: 0.04395, offset: -1440.11, unit: 'deg', minRaw: 3, maxRaw: 65532 },
     diagnosticVoltage: { factor: 0.02, offset: 0, unit: 'V', minRaw: 0, maxRaw: 32767 },
@@ -179,16 +179,35 @@ add('altitude', 'GPS altitude', 'sources', 'Motion', { source: 'gps', field: 'ra
     instance: 'Main_Instance', decoder: 'height', unit: 'ft', numeric: true, staleMs: 5000,
     notes: 'Height requires a 3D fix and heightValid. rawLengthMeter is converted to feet. Height reference/geoid and accuracy remain unconfirmed.' });
 
+candidate('tyrePressureUnit', 'Reported tire pressure unit', 'sources', 'Tires / TPMS', 'vehicle',
+    'statusNewCurrentUnitsStatusExt', 'unitOfMeasurementAirPressure', null,
+    'Vehicle-configured TPMS pressure unit: 1 BAR, 2 KPA, 3 PSI. Unknown units are not inferred from values.',
+    { decoder: 'pressureUnit' });
+candidate('tyreTemperatureUnit', 'Reported tire temperature unit', 'sources', 'Tires / TPMS', 'vehicle',
+    'statusNewCurrentUnitsStatusExt', 'unitOfMeasurementTemperature', null,
+    'Vehicle-configured TPMS temperature unit: 1 C, 2 F. Pressure units do not establish temperature units.',
+    { decoder: 'temperatureUnit' });
 ['FLH', 'FRH', 'RLH', 'RRH'].forEach((wheel, i) => {
     const group = 'Tires / TPMS: ' + ['Front left', 'Front right', 'Rear left', 'Rear right'][i];
     const common = { position: ['Front left', 'Front right', 'Rear left', 'Rear right'][i],
         positionBasis: 'Reported by wheel-specific field; not inferred from a radio slot', staleMs: 20000 };
-    candidate('pressure' + wheel, 'Pressure', 'sources', group, 'tpms', 'statusTyrePressure', 'actualValuePressureTyre' + wheel, 65532,
-        'Car Vitals / BMW x_call pressure conversion: raw * 0.1 bar, displayed in psi; accepted physical range 0-6 bar. Raw >= 65532 remains invalid.', Object.assign({}, common, { decoder: 'tyrePressure', pages: ['dynamics'] }));
-    candidate('tyreTemp' + wheel, 'Temperature', 'sources', group, 'tpms', 'statusTyreTemperature', 'actualValueTemperatureTyre' + wheel, 65532,
-        'Car Vitals temperature conversion: raw - 40 degrees C, displayed in degrees F; accepted range -40 to 150 degrees C. Saved 65534 remains invalid.', Object.assign({}, common, { decoder: 'tyreTemperature', pages: ['dynamics'] }));
-    candidate('target' + wheel, 'Target pressure', 'sources', group, 'tpms', 'statusTargetTyrePressure', 'targetPressureTyre' + wheel, 65532,
-        'Target pressure uses the BMW x_call raw * 0.1 bar conversion, displayed in psi; accepted physical range 0-6 bar. Target is not actual pressure; saved 65533 remains invalid.', Object.assign({}, common, { decoder: 'tyrePressure' }));
+    [['pressure', 'Pressure', 'statusTyrePressure', 'actualValuePressureTyre', 'pressure'],
+        ['tyreTemp', 'Temperature', 'statusTyreTemperature', 'actualValueTemperatureTyre', 'temperature'],
+        ['target', 'Target pressure', 'statusTargetTyrePressure', 'targetPressureTyre', 'target']].forEach((item) => {
+        const temperature = item[4] === 'temperature', rawId = item[0] + 'Raw' + wheel;
+        candidate(rawId, item[1] + ' (vehicle units)', 'sources', group, 'tpms', item[2], item[3] + wheel, 65532,
+            'Native TPMS value: ' + (temperature ? 'raw minus 40 in the vehicle temperature unit.' :
+                'raw * 0.1 in the vehicle pressure unit.') + ' Raw >= 65532 remains invalid.',
+            Object.assign({}, common, { decoder: temperature ? 'tyreTemperatureRaw' : 'tyrePressureRaw' }));
+        add(item[0] + wheel, item[1], 'sources', group, Object.assign({}, common, {
+            kind: 'derived', numeric: true, unit: temperature ? 'F' : 'psi', tpmsMeasure: item[4],
+            dependsOn: [rawId, temperature ? 'tyreTemperatureUnit' : 'tyrePressureUnit'],
+            pages: item[4] === 'target' ? undefined : ['dynamics'],
+            notes: 'TPMS normalized using the reported vehicle unit, displayed in ' + (temperature ? 'degrees F' : 'psi') +
+                '. Requires an explicit supported unit; accepted range ' +
+                (temperature ? '-40 to 150 degrees C.' : item[4] === 'target' ? '1-6 bar (target).' : '0.5-6 bar (actual).'),
+        }));
+    });
     add('tyreState' + wheel, 'Reported wheel state', 'sources', group, Object.assign({
         notes: 'Saved aggregate tyre qualifiers do not identify an individual wheel state or sensor identity.' }, common));
 });
@@ -282,9 +301,17 @@ for (let i = 1; i <= 4; i++) {
         'ISTA KOMBSP18 TANKINHALT: KOMBI 0x60, UDS 22 D11F; right, left, undamped total and damped total are big-endian unsigned 16-bit / 128 litres. Tank phase must be 1 (sensors OK). US gallons are derived from litres.',
         { instance: 'SystemFunctionsInternalTasuInst1', decoder: 'diagnosticFuel', pollMs: 5000,
             diag: { target: 0x60, sid: 0x22, did: 0xD11F, at: item[2], bytes: 2, minBytes: 9, validAt: 8, validValues: [1] } }));
-['oilPressure', 'fuelHighActual', 'fuelHighTarget', 'fuelLowActual', 'fuelLowTarget'].forEach((id, i) =>
-    add(id, ['Oil pressure (actual)', 'High-pressure fuel (actual)', 'High-pressure fuel (target)', 'Low-pressure fuel (actual)',
-        'Low-pressure fuel (target)'][i], 'health', i === 0 ? 'Oil pressure' : 'Fuel system', { pages: ['health', 'temperatures'] }));
+diagnostic('fuelHighActual', 'High-pressure fuel (actual)', 'health', 'Fuel system', 0x12, 0xF423, 0, 2, {
+    unit: 'psi', scale: 0.1 * 14.503773773020923, physicalMin: 0, physicalMax: 500 * 14.503773773020923,
+    pages: ['health', 'temperatures'],
+    notes: 'Car Vitals UDS F423 / OBD PID 23: direct-injection fuel rail gauge pressure, unsigned BE16 * 0.1 bar, displayed in psi. This is the configured DME reading, not separate bank-specific rail coverage; absolute F459 is not substituted.' });
+diagnostic('fuelLowActual', 'Low-pressure fuel (actual)', 'health', 'Fuel system', 0x12, 0xF40A, 0, 1, {
+    unit: 'psi', scale: 0.03 * 14.503773773020923, physicalMin: 0.5 * 14.503773773020923, physicalMax: 8 * 14.503773773020923,
+    pages: ['health', 'temperatures'],
+    notes: 'Car Vitals UDS F40A / OBD PID 0A: low-pressure fuel supply gauge pressure, unsigned byte * 0.03 bar, displayed in psi. Manifold-relative F422 / OBD PID 22 is a different pressure reference and is not substituted.' });
+[['oilPressure', 'Oil pressure (actual)', 'Oil pressure'], ['fuelHighTarget', 'High-pressure fuel (target)', 'Fuel system'],
+    ['fuelLowTarget', 'Low-pressure fuel (target)', 'Fuel system']].forEach((item) =>
+    add(item[0], item[1], 'health', item[2], { pages: ['health', 'temperatures'] }));
 for (let cylinder = 1; cylinder <= 8; cylinder++) {
     const identity = 'C' + cylinder + ' is a requested cylinder identity, not an established physical/DME mapping. ';
     add('timingCorrection' + cylinder, 'C' + cylinder + ' timing correction', 'health', 'Cylinder timing correction', {
@@ -363,6 +390,12 @@ function decode(d, raw) {
         return { state: 'live', value: physical, unit: d.unit, quality: 'Documented diagnostic conversion; ' +
             (d.diag.validAt !== undefined || d.diag.qualityAt !== undefined ? 'documented qualifier accepted' :
                 'no source-defined validity flag/sentinel established; positive response is not independent physical validation') };
+    }
+    if (d.decoder === 'pressureUnit' || d.decoder === 'temperatureUnit') {
+        const units = d.decoder === 'pressureUnit' ? { 1: 'BAR', 2: 'KPA', 3: 'PSI' } : { 1: 'C', 2: 'F' };
+        const unit = typeof value === 'number' ? units[value] : Object.values(units).includes(value) ? value : null;
+        return unit ? { state: 'live', value: unit, quality: 'Reported vehicle display unit' } :
+            { state: 'invalid', note: 'Unknown vehicle display unit; TPMS conversion withheld' };
     }
     if (d.decoder === 'mode' || d.decoder === 'traction') {
         const names = d.decoder === 'mode' ? modeNames : tractionNames;

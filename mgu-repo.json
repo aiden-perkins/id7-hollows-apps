@@ -1,0 +1,18 @@
+{
+  "schema": 1,
+  "apps": {
+    "path": "apps/*",
+    "manifest": "app.json",
+    "mguHmi": ["ID7"],
+    "requires": {
+      "idrive7-renderd": "2.1.6",
+      "mgu-inputgate": "1.0.0"
+    },
+    "build": {
+      "python": "cmd/mgu/tools/store_build.py",
+      "args": ["{id}"],
+      "sdk": "bmw-extracted/oap-sdk",
+      "network": true
+    }
+  }
+}

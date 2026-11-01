@@ -11,6 +11,9 @@
       "statusEngineTemperature": "rs",
       "statusEngineSpeed2": "rs"
     },
+    "de.bmw.infotainment.vehicle.Vehicle": {
+      "statusNewCurrentUnitsStatusExt": "rs"
+    },
     "de.bmw.infotainment.vehicle.Vehicle2": {
       "statusCarSpeed2": "rs",
       "statusStandstillFunctions": "rs"

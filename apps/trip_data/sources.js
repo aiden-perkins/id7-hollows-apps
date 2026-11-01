@@ -8,8 +8,8 @@ const DEFINITIONS = [
 const NOTES = {
     ignition: 'No validated ignition-on/off source; infotainment power and engine stop/start are not ignition boundaries.',
     fuel: 'No validated consumption/flow source. Tank-level changes are not short-trip fuel consumption.',
-    speed: 'Only standstill payloads established; raw / 64 km/h requires moving-vehicle validation.',
-    rpm: 'Upstream raw / 4 RPM conversion requires comparison with vehicle instruments.',
+    speed: 'Raw / 64 km/h, converted to mph; 65535 is unavailable.',
+    rpm: 'Raw * 0.25 RPM; 65535 is unavailable.',
     gps: '3D height converted from rawLengthMeter to feet; height reference, accuracy and vertical response unconfirmed.',
     gear: 'Catalog-reported selector enums; NP stays unresolved. No transmission program is inferred.',
 };
@@ -34,8 +34,9 @@ function decode(key, raw) {
         return { state: gear ? 'live' : 'invalid', value: gear || null, note: NOTES.gear };
     }
     const value = raw[key === 'speed' ? 'speedVehicleCentreOfGravity' : 'actualValueRPMEngineCrankshaft'];
-    return { state: Number.isInteger(value) && value >= 0 && value < 65535 ? 'unavailable' : 'invalid',
-        value: null, note: NOTES[key] };
+    const valid = Number.isInteger(value) && value >= 0 && value < 65535;
+    return { state: valid ? 'live' : 'invalid',
+        value: valid ? (key === 'speed' ? value / 64 * 0.621371 : value * 0.25) : null, note: NOTES[key] };
 }
 function deadline(p, ms, label) {
     let timer;

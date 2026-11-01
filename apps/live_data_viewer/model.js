@@ -75,6 +75,31 @@ class Model {
     derivedValue(d, now) {
         const r = this.readings[d.id];
         if (!r.collecting) return { state: r.at ? 'stale' : 'waiting', note: 'Collection paused outside this page' };
+        if (d.tpmsMeasure) {
+            const raw = this.state(definitionsById[d.dependsOn[0]]), unit = this.state(definitionsById[d.dependsOn[1]]);
+            if (raw.state !== 'live' || unit.state !== 'live') {
+                const unavailable = raw.state !== 'live' ? raw : unit;
+                return { state: unavailable.state, note: 'TPMS requires a fresh reading and its reported vehicle unit: ' +
+                    (unavailable.note || unavailable.state) };
+            }
+            if (!Number.isFinite(raw.value)) return { state: 'invalid', note: 'Invalid native TPMS value' };
+            if (d.tpmsMeasure === 'temperature') {
+                const celsius = unit.value === 'C' ? raw.value : unit.value === 'F' ? (raw.value - 32) / 1.8 : NaN;
+                if (!Number.isFinite(celsius) || celsius < -40 || celsius > 150) {
+                    return { state: 'invalid', note: 'TPMS temperature outside -40 to 150 degrees C' };
+                }
+                return { state: 'live', value: celsius * 1.8 + 32, unit: 'F',
+                    quality: 'TPMS normalized from reported vehicle temperature unit ' + unit.value };
+            }
+            const bar = unit.value === 'BAR' ? raw.value : unit.value === 'KPA' ? raw.value / 100 :
+                unit.value === 'PSI' ? raw.value / 14.503773773020923 : NaN;
+            if (!Number.isFinite(bar) || bar < (d.tpmsMeasure === 'target' ? 1 : 0.5) || bar > 6) {
+                return { state: 'invalid', note: 'TPMS pressure outside documented ' +
+                    (d.tpmsMeasure === 'target' ? '1-6 bar target' : '0.5-6 bar actual') + ' range' };
+            }
+            return { state: 'live', value: bar * 14.503773773020923, unit: 'psi',
+                quality: 'TPMS normalized from reported vehicle pressure unit ' + unit.value };
+        }
         if (d.preferred) {
             for (const id of d.dependsOn) {
                 const source = definitionsById[id], value = this.state(source);
