@@ -49,7 +49,7 @@ const references = {
     torque: { 'lb-ft': [0, 1000, 200], Nm: [0, 1400, 250], 'N m': [0, 1400, 250] },
 };
 const defaults = { boost: 'psi', horsepower: 'hp', torque: 'lb-ft' };
-function dial(cv, t, vm, id, title, x, color) {
+function dial(cv, t, vm, id, title, box, color) {
     const d = vm.model.definitions[id], unit = d.unit || defaults[id], spec = references[id][unit];
     const supported = !!d.unit && !!spec && d.numeric && d.decoder !== 'unscaled' && !/^raw\b/i.test(d.unit);
     const range = spec || references[id][defaults[id]], s = get(vm, id), r = vm.model.readings[id];
@@ -57,32 +57,35 @@ function dial(cv, t, vm, id, title, x, color) {
     const displayed = (value) => Number.isFinite(value) ?
         id === 'boost' ? clamp(value, 0, 40) : Math.max(0, value) : null;
     const n = displayed(supported ? numeric(vm, id) : null);
-    const cx = x + 184, cy = vm.contentTop + 160;
+    const scale = Math.min(box.w / 352, box.h / 320);
+    const cx = box.x + box.w / 2, cy = box.y + box.h / 2 + 12 * scale;
     const angle = (value) => -130 + 260 * clamp((value - range[0]) / (range[1] - range[0]), 0, 1);
-    cv.arc(cx, cy, 137, 151, -130, 130, t.track);
-    cv.arc(cx, cy, 123, 128, -130, 130, C.cyan + '60');
+    cv.arc(cx, cy, 137 * scale, 151 * scale, -130, 130, t.track);
+    cv.arc(cx, cy, 123 * scale, 128 * scale, -130, 130, C.cyan + '60');
     for (let i = 0; i <= 20; i++) {
         const a = -130 + 13 * i, major = i % 5 === 0;
-        const p = point(cx, cy, 155, a), q = point(cx, cy, major ? 164 : 160, a);
-        cv.line(p[0], p[1], q[0], q[1], major ? 2 : 1.5, t.tick);
+        const p = point(cx, cy, 155 * scale, a), q = point(cx, cy, (major ? 164 : 160) * scale, a);
+        cv.line(p[0], p[1], q[0], q[1], (major ? 2 : 1.5) * scale, t.tick);
         if (major) {
-            const z = point(cx, cy, 107, a);
-            text(cv, fmt(range[0] + (range[1] - range[0]) * i / 20, 0), z[0], z[1] + 6, 56, 17, t.dim, { align: 'center', font: 'num' });
+            const z = point(cx, cy, 107 * scale, a);
+            text(cv, fmt(range[0] + (range[1] - range[0]) * i / 20, 0), z[0], z[1] + 6 * scale,
+                56 * scale, 17 * scale, t.dim, { align: 'center', font: 'num' });
         }
     }
     const max = displayed(supported ? r.max : null);
-    if (max !== null) { const p = point(cx, cy, 158, angle(max)); diamond(cv, p[0], p[1], 5, C.cyan); }
+    if (max !== null) { const p = point(cx, cy, 158 * scale, angle(max)); diamond(cv, p[0], p[1], 5 * scale, C.cyan); }
     if (n !== null) {
-        const a = angle(n), p = point(cx, cy, 134, a), q = point(cx, cy, 153, a), c = ink(t, s, color);
-        if (a > -130) cv.arc(cx, cy, 137, 151, -130, a, c);
-        cv.line(p[0], p[1], q[0], q[1], 3, t.text);
+        const a = angle(n), p = point(cx, cy, 134 * scale, a), q = point(cx, cy, 153 * scale, a), c = ink(t, s, color);
+        if (a > -130) cv.arc(cx, cy, 137 * scale, 151 * scale, -130, a, c);
+        cv.line(p[0], p[1], q[0], q[1], 3 * scale, t.text);
     }
     const readout = fmt(n, id === 'boost' ? 1 : 0), options = { align: 'center', font: 'num' };
-    const size = Math.min(84, 84 * 292 / Math.max(1, cv.textWidth(readout, 84, options)));
-    cv.text(readout, cx, cy + 34, size, ink(t, s, color), options);
-    text(cv, unit, cx, cy + 76, 292, 24, t.dim, { align: 'center' });
-    text(cv, title, cx, cy + 110, 300, 24, t.text, { align: 'center', font: 'bold' });
-    text(cv, 'MAX ' + fmt(max, id === 'boost' ? 1 : 0), cx, cy + 135, 300, 18, t.dim, options);
+    const maxSize = 84 * scale;
+    const size = Math.min(maxSize, maxSize * 292 * scale / Math.max(1, cv.textWidth(readout, maxSize, options)));
+    cv.text(readout, cx, cy + 34 * scale, size, ink(t, s, color), options);
+    text(cv, unit, cx, cy + 76 * scale, 292 * scale, 24 * scale, t.dim, { align: 'center' });
+    text(cv, title, cx, cy + 110 * scale, 300 * scale, 24 * scale, t.text, { align: 'center', font: 'bold' });
+    text(cv, 'MAX ' + fmt(max, id === 'boost' ? 1 : 0), cx, cy + 135 * scale, 300 * scale, 18 * scale, t.dim, options);
 }
 function linear(cv, t, vm, id, title, box, reference, color, places) {
     const d = vm.model.definitions[id], s = get(vm, id), x = box.x, y = box.y, w = box.w;

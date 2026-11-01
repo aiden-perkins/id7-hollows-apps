@@ -2,7 +2,7 @@
   "id": "live_data_viewer",
   "title": "Live Data Viewer",
   "description": "Performance meters, front/rear active anti-roll dynamics, rolling temperatures and eight-cylinder engine-health comparison",
-  "version": "1.7.1",
+  "version": "1.7.2",
   "vendor": "custom",
   "loggingId": "OA9E",
   "iconGlyph": "LIVE",

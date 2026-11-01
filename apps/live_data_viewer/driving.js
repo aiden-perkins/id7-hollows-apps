@@ -4,26 +4,33 @@ const M = require('./meters');
 const { C, text, get, numeric, fmt, ink } = I;
 // October 2018 M850i specification: 68 L graphical reference, not a live capacity.
 const FUEL_CAPACITY_L = 68;
+const PERFORMANCE = [
+    { id: 'boost', label: 'BOOST' },
+    { id: 'horsepower', label: 'POWER' },
+    { id: 'torque', label: 'TORQUE' },
+];
 const TEMPERATURES = [
-    { id: 'oilCds', label: 'ENGINE OIL', x: 143, width: 250 },
-    { id: 'coolantCds', label: 'COOLANT', x: 660, width: 280 },
-    { id: 'transmissionDa12', label: 'TRANS OIL', x: 1197, width: 276 },
+    { id: 'oilCds', label: 'ENGINE OIL' },
+    { id: 'coolantCds', label: 'COOLANT' },
+    { id: 'transmissionDa12', label: 'TRANS OIL' },
 ];
 function reported(vm, id, values) {
     if (!vm.model.definitions[id]) return null;
     const s = get(vm, id);
     return s.state === 'live' && !s.retained && values.includes(s.value) ? s.value : null;
 }
-function temperatures(cv, t, vm, y) {
-    TEMPERATURES.forEach(({ id, label, x, width }) => {
+function temperatures(cv, t, vm, box) {
+    const width = (box.w - 24) / 3;
+    TEMPERATURES.forEach(({ id, label }, index) => {
+        const x = box.x + index * (width + 12) + width / 2;
         const state = get(vm, id), value = vm.model.definitions[id].unit === 'F' ? numeric(vm, id) : null;
-        text(cv, label, x, y + 15, 132, 16, t.dim, { font: 'bold' });
-        text(cv, fmt(value, 0) + ' °F', x + width, y + 17, width - 140, 26, ink(t, state, C.blue),
-            { align: 'right', font: 'num' });
+        text(cv, label, x, box.y + 20, width, 16, t.dim, { align: 'center', font: 'bold' });
+        text(cv, fmt(value, 0) + ' °F', x, box.y + 64, width, 40, ink(t, state, C.blue),
+            { align: 'center', font: 'num' });
     });
 }
-function fuel(cv, t, vm, y) {
-    const x = 660, width = 280, total = vm.model.definitions.tankTotal.unit === 'L' ? numeric(vm, 'tankTotal') : null;
+function fuel(cv, t, vm, x, y) {
+    const width = 280, total = vm.model.definitions.tankTotal.unit === 'L' ? numeric(vm, 'tankTotal') : null;
     const color = ink(t, get(vm, 'tankTotal'), C.blue);
     cv.strokeRoundRect(x, y + 48, width, 100, 7, 2, color);
     cv.polyline([[x + 133, y + 48], [x + 133, y + 34], [x + 182, y + 34], [x + 197, y + 48]], 2, color);
@@ -43,8 +50,8 @@ function fuel(cv, t, vm, y) {
             anchor, y + 137, 92, 14, ink(t, get(vm, id), C.blue), { align: index ? 'right' : 'left', font: 'num' });
     });
 }
-function electrical(cv, t, vm, y) {
-    const x = 143, width = 250, value = vm.model.definitions.voltage.unit === 'V' ? numeric(vm, 'voltage') : null;
+function electrical(cv, t, vm, x, y) {
+    const width = 250, value = vm.model.definitions.voltage.unit === 'V' ? numeric(vm, 'voltage') : null;
     const reading = vm.model.readings.voltage, color = ink(t, get(vm, 'voltage'), C.blue);
     cv.strokeRoundRect(x, y + 48, width, 100, 7, 2, color);
     cv.fillRect(x + width, y + 80, 9, 32, color);
@@ -54,8 +61,8 @@ function electrical(cv, t, vm, y) {
     text(cv, 'MIN ' + fmt(reading.min, 2), x + 14, y + 137, 104, 15, t.dim, { font: 'num' });
     text(cv, 'MAX ' + fmt(reading.max, 2), x + width - 14, y + 137, 104, 15, t.dim, { align: 'right', font: 'num' });
 }
-function exhaust(cv, t, vm, y) {
-    const x = 1197, center = 1332;
+function exhaust(cv, t, vm, x, y) {
+    const center = x + 128;
     cv.roundRect(center - 46, y + 50, 92, 35, 10, t.panelTop);
     cv.strokeRoundRect(center - 46, y + 50, 92, 35, 10, 2, t.tick);
     cv.line(center, y + 40, center, y + 50, 12, t.tick);
@@ -68,22 +75,33 @@ function exhaust(cv, t, vm, y) {
     });
     const labels = ['Open', 'Closed', 'OEM'], modes = ['open', 'closed', 'oem'];
     modes.forEach((mode, index) => {
-        const bx = x + index * 92, by = y + 110, selected = vm.exhaustMode === mode;
-        cv.roundRect(bx, by, 84, 42, 7, selected ? C.blue + '28' : t.panelTop);
-        cv.strokeRoundRect(bx, by, 84, 42, 7, 1.5, selected ? C.blue : t.tick);
-        text(cv, labels[index], bx + 42, by + 27, 76, 18, selected ? C.blue : t.text, { align: 'center', font: 'bold' });
-        cv.targets.push({ key: 'exhaust' + labels[index], x: bx, y: by, w: 84, h: 42,
+        const bx = x + 280 + index * 104, by = y + 62, selected = vm.exhaustMode === mode;
+        cv.roundRect(bx, by, 96, 48, 7, selected ? C.blue + '28' : t.panelTop);
+        cv.strokeRoundRect(bx, by, 96, 48, 7, 1.5, selected ? C.blue : t.tick);
+        text(cv, labels[index], bx + 48, by + 30, 88, 18, selected ? C.blue : t.text, { align: 'center', font: 'bold' });
+        cv.targets.push({ key: 'exhaust' + labels[index], x: bx, y: by, w: 96, h: 48,
             run: () => vm.setExhaust(mode) });
     });
 }
 module.exports = function driving(cv, t, vm) {
     cv.targets = [];
-    M.dial(cv, t, vm, 'boost', 'BOOST', 84, C.blue);
-    M.dial(cv, t, vm, 'horsepower', 'POWER', 616, C.blue);
-    M.dial(cv, t, vm, 'torque', 'TORQUE', 1148, C.blue);
-    const accessoryTop = vm.contentBottom - 156;
-    temperatures(cv, t, vm, accessoryTop);
-    electrical(cv, t, vm, accessoryTop);
-    fuel(cv, t, vm, accessoryTop);
-    exhaust(cv, t, vm, accessoryTop);
+    const top = vm.contentTop + 4, bottom = vm.contentBottom - 4, height = bottom - top;
+    const leftWidth = 928, right = 960, rightWidth = 624, dialWidth = (leftWidth - 32) / 3;
+    cv.roundRect(16, top, leftWidth, height, 10, t.panelBottom);
+    cv.strokeRoundRect(16, top, leftWidth, height, 10, 1, t.track);
+    cv.roundRect(right, top, rightWidth, height, 10, t.panelBottom);
+    cv.strokeRoundRect(right, top, rightWidth, height, 10, 1, t.track);
+    PERFORMANCE.forEach(({ id, label }, index) => {
+        M.dial(cv, t, vm, id, label,
+            { x: 32 + index * dialWidth, y: top + 16, w: dialWidth, h: height - 32 }, C.blue);
+    });
+    [0.24, 0.67].forEach((fraction) => {
+        const y = top + height * fraction;
+        cv.line(right + 16, y, right + rightWidth - 16, y, 1, t.track);
+    });
+    temperatures(cv, t, vm, { x: right + 16, y: top + 12, w: rightWidth - 32 });
+    const accessoryTop = top + height * 0.455 - 91;
+    electrical(cv, t, vm, right + 24, accessoryTop);
+    fuel(cv, t, vm, right + 320, accessoryTop);
+    exhaust(cv, t, vm, right + 16, top + height * 0.835 - 75);
 };
