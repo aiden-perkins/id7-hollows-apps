@@ -57,8 +57,8 @@ function diagnostic(id, name, page, group, target, did, at, bytes, options) {
         Object.assign(opts, { instance: 'SystemFunctionsInternalTasuInst1', diag }));
 }
 const thermalNote = 'BMW M Laptimer engine-temperature conversion: raw minus 48 degrees C, displayed in degrees F. Raw 255 is unavailable.';
-candidate('coolantCds', 'Coolant / engine water (CDS)', 'sources', 'Engine', 'engine', 'statusEngineTemperature', 'temperatureEngineDrive', 255, thermalNote, { decoder: 'engineTemperature' });
-candidate('oilCds', 'Engine oil (CDS)', 'sources', 'Engine', 'engine', 'statusEngineTemperature', 'temperatureEngineOilDrive', 255, thermalNote, { decoder: 'engineTemperature' });
+candidate('coolantCds', 'Coolant / engine water (CDS)', 'sources', 'Engine', 'engine', 'statusEngineTemperature', 'temperatureEngineDrive', 255, thermalNote, { decoder: 'engineTemperature', pages: ['driving'] });
+candidate('oilCds', 'Engine oil (CDS)', 'sources', 'Engine', 'engine', 'statusEngineTemperature', 'temperatureEngineOilDrive', 255, thermalNote, { decoder: 'engineTemperature', pages: ['driving'] });
 function preferred(id, name, group, inputs, notes) {
     add(id, name, 'temperatures', group, { kind: 'derived', numeric: true, unit: 'F',
         dependsOn: inputs, preferred: true, staleMs: 10000, notes });
@@ -88,6 +88,9 @@ candidate('transmission1', 'Transmission oil (vehicle signal)', 'temperatures', 
 temperature('transmission2', 'Transmission oil (EGS)', 'temperatures', 'Transmission', 0x18, 0x6000, 1, 1, -40, {
     physicalMin: -40, physicalMax: 160,
     notes: 'Actual G015 SVT and 2026-10-28 E-Sys inventory identify EGS7. S18A EGS__ZFB_CE_EV maps EGS7 to GSZFBCE. ISTA GSZFBCE SG_FUNKTIONEN _GETRIEBEOELTEMPERATUR / 6000: unsigned byte - 40 Celsius, also upstream Car Vitals first EGS candidate. DA12 forum scaling is not substituted.' });
+temperature('transmissionDa12', 'Transmission oil (EGS DA12)', 'driving', 'Transmission', 0x18, 0xDA12, 1, 1, -48, {
+    physicalMin: -40, physicalMax: 160,
+    notes: 'Requested EGS ECU 0x18 / UDS 22 DA12: upstream Car Vitals candidate uses payload byte 0 - 48 Celsius. Forum-reported scaling is unconfirmed on this car; this is separate from the validated GSZFBCE 6000 conversion.' });
 add('converter', 'Torque converter temperature', 'temperatures', 'Transmission', { notes: 'GSZFBCE converter-temperature collectives are historical time-in-temperature bins, not a current converter sensor. Neither transmission-oil signal is substituted.' });
 add('iatBank1', 'Intake air / bank 1', 'temperatures', 'Air', {
     numeric: true, unit: 'F', notes: 'DME 580F/581E and OBD 0F do not establish bank 1 identity. Generic intake air is separately displayed; F477 identifies charge air, not bank-1 intake air.' });
