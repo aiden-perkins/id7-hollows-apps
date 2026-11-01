@@ -28,6 +28,7 @@ const converters = {
     diagnosticPedal: { factor: 0.01220703, offset: 0, unit: '%', minRaw: 0, maxRaw: 8192 },
     diagnosticFuel: { factor: 1 / 128, offset: 0, unit: 'L', maxRaw: 65535 },
     torqueShareRear: { factor: 0.01, offset: 0, unit: '%', maxRaw: 10000 },
+    boostFes: { factor: 0.01, offset: 0, multiplier: 14.503773773020923, unit: 'psi', maxRaw: 254 },
     diagnosticBrake: { factor: 0.1, offset: 0, unit: 'bar', minRaw: -32768, maxRaw: 32767 },
 };
 const qualifierEnums = {
@@ -152,15 +153,32 @@ candidate('speed', 'Vehicle speed', 'sources', 'Motion', 'speed', 'statusCarSpee
     'BMW M Laptimer vehicle speed: raw / 64 km/h, converted to mph. Valid standstill zero is retained.', { decoder: 'speed' });
 candidate('rpm', 'Engine speed', 'driving', 'Drivetrain', 'engine', 'statusEngineSpeed2', 'actualValueRPMEngineCrankshaft', 65535,
     'BMW M Laptimer engine speed: raw / 4 rpm. Valid stopped-engine zero is retained.', { decoder: 'rpm' });
-diagnostic('boostAbsolute', 'Pre-throttle absolute pressure', 'driving', 'Drivetrain', 0x12, 0x4205, 0, 2, {
-    unit: 'hPa', scale: 20 / 256, pollMs: 100, staleMs: 3000,
-    notes: 'ISTA DME8FF_R IPLAD: pressure before throttle, unsigned BE16 * 20 / 256 hPa absolute; range 0-5120 hPa.' });
-diagnostic('barometricPressure', 'Ambient absolute pressure', 'driving', 'Drivetrain', 0x12, 0x4201, 0, 2, {
-    unit: 'hPa', scale: 10 / 256, pollMs: 1000, staleMs: 5000,
-    notes: 'ISTA DME8FF_R IPUMG: ambient pressure unsigned BE16 * 10 / 256 hPa. No fixed sea-level substitute is used.' });
+candidate('boostFes', 'Sport-display boost', 'sources', 'Drivetrain', 'mode', 'statusSwitchDriveDynamicSport2', 'displayBoostPressure', 255,
+    'M Vitals sport-display source: raw * 0.01 bar, converted to psi. Notifications are delivered immediately; raw 255 is unavailable.',
+    { decoder: 'boostFes', pollMs: 100, staleMs: 3000 });
+function pressure(id, name, pollMs, candidates, notes) {
+    const configs = candidates.map((c) => Object.assign({ target: 0x12, sid: 0x22, scale: 1, offset: 0 },
+        c, { minBytes: c.at + c.bytes }));
+    const first = configs[0];
+    diagnostic(id, name, 'sources', 'Drivetrain', first.target, first.did, first.at, first.bytes,
+        { unit: 'kPa', pollMs, staleMs: 3000, diag: first, diagCandidates: configs, notes });
+}
+pressure('barometricPressure', 'Ambient absolute pressure', 60000, [
+    { did: 0xF433, at: 0, bytes: 1, physicalMin: 50, physicalMax: 115 },
+    { sid: 0x01, did: 0x33, at: 0, bytes: 1, physicalMin: 50, physicalMax: 115 },
+], 'M Vitals ambient-pressure candidates, refreshed once a minute. Diagnostic boost retains the last good ambient reading, or explicitly uses 101.3 kPa until one is available.');
+pressure('boostAbsolute', 'Charge / manifold absolute pressure', 100, [
+    { did: 0xF470, at: 3, bytes: 2, scale: 1 / 32, physicalMin: 20, physicalMax: 600 },
+    { did: 0xF487, at: 1, bytes: 2, scale: 1 / 32, physicalMin: 20, physicalMax: 600 },
+    { did: 0xF40B, at: 0, bytes: 1, physicalMin: 20, physicalMax: 255 },
+    { sid: 0x01, did: 0x0B, at: 0, bytes: 1, physicalMin: 20, physicalMax: 255 },
+], 'M Vitals diagnostic candidates in priority order; the last successful candidate is reused. The 100 ms target is limited by ECU latency and the shared serial queue.');
+add('boostDme', 'Diagnostic boost', 'sources', 'Drivetrain', { kind: 'derived', numeric: true, unit: 'psi',
+    dependsOn: ['boostAbsolute', 'barometricPressure'], staleMs: 3000,
+    notes: 'M Vitals gauge-pressure conversion: charge / manifold absolute kPa minus last good ambient kPa (initial fallback 101.3), converted to psi. Accepted range -1 to 4 bar.' });
 add('boost', 'Boost pressure (gauge)', 'driving', 'Drivetrain', { kind: 'derived', numeric: true, unit: 'psi',
-    dependsOn: ['boostAbsolute', 'barometricPressure'], maxSkewMs: 2000, staleMs: 3000,
-    notes: 'Upstream Car Vitals gauge-pressure method: actual pre-throttle absolute pressure minus measured ambient pressure, converted hPa to psi and floored at zero. Inputs must be fresh and within 2 seconds by local arrival time.' });
+    dependsOn: ['boostFes', 'boostDme'], preferred: true, staleMs: 3000,
+    notes: 'M Vitals Auto selection: prefer a working sport-display source, otherwise diagnostic boost. Auto requires a source to vary by at least 0.03 bar once, remembered across sessions. Manual source choices bypass that check. Stale inputs are not displayed as live.' });
 candidate('torque', 'Actual crankshaft torque', 'driving', 'Drivetrain', 'mode', 'statusActualValueTorque2', 'actualValueTorqueCrankshaft', 4095,
     'BMW M Laptimer crankshaft torque: raw * 0.5 - 1023.5 Nm, converted to lb-ft. Negative engine-braking torque is retained.', { decoder: 'torque' });
 add('horsepower', 'Horsepower', 'driving', 'Drivetrain', { kind: 'derived', numeric: true, unit: 'hp', staleMs: 2000,
@@ -382,12 +400,14 @@ function decode(d, raw) {
             { state: 'unavailable', note: 'Current electrical output is outside documented open/close drive bands; physical position unmeasured' };
     }
     if (d.decoder === 'diagnosticScalar') {
-        if (!(d.diag.format === 'float32' ? Number.isFinite(value) : Number.isSafeInteger(value)) ||
+        const conversion = d.diagCandidates ? d.diagCandidates.find((c) => c.sid === raw.sid && c.did === raw.identifier) : d;
+        if (!conversion || !(d.diag.format === 'float32' ? Number.isFinite(value) : Number.isSafeInteger(value)) ||
             d.invalidFrom != null && value >= d.invalidFrom) return { state: 'invalid', note: 'Invalid diagnostic scalar' };
-        const physical = value * d.scale + d.offset;
+        const physical = value * conversion.scale + conversion.offset;
         if (!Number.isFinite(physical) || d.unit === 'F' && physical < -459.67) return { state: 'invalid', note: 'Diagnostic temperature below absolute zero' };
         const celsius = d.unit === 'F' ? (physical - 32) / 1.8 : physical;
-        if (d.physicalMin !== undefined && celsius < d.physicalMin || d.physicalMax !== undefined && celsius > d.physicalMax) {
+        if (conversion.physicalMin !== undefined && celsius < conversion.physicalMin ||
+            conversion.physicalMax !== undefined && celsius > conversion.physicalMax) {
             return { state: 'invalid', note: 'Diagnostic value outside the documented upstream physical range' };
         }
         return { state: 'live', value: physical, unit: d.unit, quality: 'Documented diagnostic conversion; ' +

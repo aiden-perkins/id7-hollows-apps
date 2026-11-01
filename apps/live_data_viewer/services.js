@@ -41,7 +41,7 @@ class Services {
         active.filter((d) => d.source && !d.diag).forEach((d) => {
             const key = D.sourceKey(d);
             if (!wanted[key]) wanted[key] = { key, iface: D.IF[d.source], instance: d.instance || '1', fields: {} };
-            wanted[key].fields[d.field] = { read: !!d.read, staleMs: d.staleMs };
+            wanted[key].fields[d.field] = { read: !!d.read, staleMs: d.staleMs, pollMs: d.pollMs };
         });
         Object.keys(this.connections).forEach((key) => {
             const c = this.connections[key], next = wanted[key];
@@ -116,7 +116,8 @@ class Services {
         try {
             for (const field of Object.keys(c.def.fields)) {
                 if (!this.alive(c) || !c.available) break;
-                const pollMs = /\.TPMS/.test(c.def.iface) ? 5000 : Math.max(100, this.model.settings.refreshMs);
+                const pollMs = /\.TPMS/.test(c.def.iface) ? 5000 :
+                    c.def.fields[field].pollMs || Math.max(100, this.model.settings.refreshMs);
                 if (c.def.fields[field].read && (!c.notifiedAt[field] || Date.now() - c.notifiedAt[field] >= pollMs)) {
                     try { await this.read(c, field); } catch (e) { failed = true; }
                 }
@@ -124,7 +125,9 @@ class Services {
         } finally {
             c.fetching = false;
             const tpms = /\.TPMS/.test(c.def.iface);
-            c.nextPoll = Date.now() + (failed ? 5000 : tpms ? 5000 : this.model.settings.refreshMs);
+            const cadence = Math.min(this.model.settings.refreshMs,
+                ...Object.keys(c.def.fields).map((field) => c.def.fields[field].pollMs || this.model.settings.refreshMs));
+            c.nextPoll = Date.now() + (failed ? 5000 : tpms ? 5000 : cadence);
         }
     }
     async snapshot(d) {

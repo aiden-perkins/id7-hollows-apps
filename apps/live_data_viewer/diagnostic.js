@@ -11,8 +11,8 @@ function deadline(promise, ms, label) {
     })]).then((value) => { clearTimeout(timer); return value; }, (error) => { clearTimeout(timer); throw error; });
 }
 function byte(value) { return Number.isInteger(value) && value >= 0 && value <= 255; }
-function configuration(d) {
-    const c = d.diag;
+function configuration(d, candidate) {
+    const c = candidate || d.diag;
     if (!c || typeof c !== 'object' || !byte(c.target) || c.target === 0xDF || c.target === 0xF2 ||
         ![0x22, 0x01].includes(c.sid) || !Number.isInteger(c.did) || c.did < 0 || c.did > (c.sid === 0x01 ? 255 : 65535) ||
         !Number.isSafeInteger(c.at) || c.at < 0 || !Number.isInteger(c.bytes) || c.bytes < 1 || c.bytes > 6 ||
@@ -34,25 +34,31 @@ class DiagnosticServices {
     constructor(ctx, model) {
         this.ctx = ctx; this.model = model; this.signals = ctx.signals;
         this.closed = false; this.generation = 0; this.signature = ''; this.groups = [];
-        this.link = null; this.pending = null; this.timer = null; this.control = null; this.fastReads = 0;
+        this.link = null; this.pending = null; this.timer = null; this.control = null; this.fastReads = 0; this.picks = {};
     }
     activate(definitions) {
         if (this.closed) return;
         const active = definitions.filter((d) => d.diag);
-        const signature = JSON.stringify(active.map((d) => [d.id, D.sourceKey(d), d.field, d.diag]));
+        const signature = JSON.stringify(active.map((d) => [d.id, D.sourceKey(d), d.field, d.diag, d.diagCandidates]));
         if (signature === this.signature) return;
         this.signature = signature; this.generation++;
         clearTimeout(this.timer); this.timer = null;
         const groups = new Map();
         active.forEach((d) => {
             try {
-                const c = configuration(d), key = [c.target, c.sid, c.did].join(':');
+                const candidates = d.diagCandidates && d.diagCandidates.map((c) => configuration(d, c));
+                const pick = candidates ? this.picks[d.id] || 0 : 0;
+                const c = candidates ? candidates[pick] : configuration(d);
+                const key = candidates ? d.id : [c.target, c.sid, c.did].join(':');
                 if (!groups.has(key)) groups.set(key, { target: c.target, sid: c.sid,
-                    params: c.sid === 0x01 ? [c.did] : [c.did >> 8, c.did & 255], entries: [], nextAt: 0, refreshBy: 0 });
+                    params: c.sid === 0x01 ? [c.did] : [c.did >> 8, c.did & 255], entries: [], nextAt: 0, refreshBy: 0,
+                    candidates, pick, failedCandidates: 0 });
+                const group = groups.get(key);
                 if (d.id === 'accelerator' || d.id === 'brakePressure' || d.id === 'kickdown' ||
-                    d.id === 'boostAbsolute' || d.id === 'barometricPressure') groups.get(key).fast = true;
-                if (d.refreshPriority) groups.get(key).refreshPriority = true;
-                groups.get(key).entries.push({ d, config: c });
+                    d.id === 'boostAbsolute' || d.id === 'barometricPressure') group.fast = true;
+                if (d.id === 'boostAbsolute' || d.id === 'barometricPressure') group.boost = true;
+                if (d.refreshPriority) group.refreshPriority = true;
+                group.entries.push({ d, config: c });
             } catch (error) { this.model.transport(D.sourceKey(d), d.field, 'error', error.message); }
         });
         this.groups = Array.from(groups.values());
@@ -105,6 +111,12 @@ class DiagnosticServices {
             return { accepted: true, mode, outcomes, confirmed: 'UNKNOWN',
                 detail: 'Both DMEs accepted request; mechanical position unmeasured. Override self-times; no automatic refresh.' };
         } finally { clearTimeout(timer); this.control = null; this._wake(); }
+    }
+    _choose(group, pick) {
+        const c = group.candidates[pick];
+        group.pick = pick; group.target = c.target; group.sid = c.sid;
+        group.params = c.sid === 0x01 ? [c.did] : [c.did >> 8, c.did & 255];
+        group.entries[0].config = c;
     }
     _status(group, state, note) {
         group.entries.forEach(({ d }) => this.model.transport(D.sourceKey(d), d.field, state, note));
@@ -212,9 +224,11 @@ class DiagnosticServices {
             this._request(request); return;
         }
         if (!this.groups.length) return;
-        const now = Date.now();
-        let due = null, nextAt = Infinity;
-        this.groups.forEach((group) => {
+        const now = Date.now(), needBoost = this.model.boostFromDme();
+        const groups = this.groups.filter((group) => !group.boost || needBoost);
+        // Keep checking FES freshness while diagnostic boost is asleep.
+        let due = null, nextAt = groups.length < this.groups.length ? now + 100 : Infinity;
+        groups.forEach((group) => {
             if (group.nextAt <= now && (!due || group.nextAt < due.nextAt)) due = group;
             nextAt = Math.min(nextAt, group.nextAt);
         });
@@ -222,12 +236,12 @@ class DiagnosticServices {
         // the shared serial queue. Prioritize a due output nearing its freshness
         // deadline; failed groups still observe their ordinary backoff.
         let urgent = null;
-        this.groups.forEach((group) => {
+        groups.forEach((group) => {
             if (group.refreshPriority && group.nextAt <= now && group.refreshBy <= now + 1000 &&
                 (!urgent || group.refreshBy < urgent.refreshBy)) urgent = group;
         });
         let fast = null;
-        if (!urgent && this.fastReads < 2) this.groups.forEach((group) => {
+        if (!urgent && this.fastReads < 2) groups.forEach((group) => {
             if (group.fast && group.nextAt <= now && (!fast || group.nextAt < fast.nextAt)) fast = group;
         });
         if (urgent) { due = urgent; this.fastReads = 0; }
@@ -282,6 +296,7 @@ class DiagnosticServices {
     }
     _deliver(group, reply) {
         const base = 1 + group.params.length;
+        let delivered = false;
         group.entries.forEach(({ d, config: c }) => {
             const required = base + Math.max(c.at + c.bytes, c.minBytes || 0, c.validAt === undefined ? 0 : c.validAt + 1,
                 c.qualityAt === undefined ? 0 : c.qualityAt + 1);
@@ -318,18 +333,26 @@ class DiagnosticServices {
             if (c.format === 'float32' ? !Number.isFinite(value) : !Number.isSafeInteger(value)) {
                 this.model.transport(D.sourceKey(d), d.field, 'invalid', 'Diagnostic quantity is not finite or safely representable'); return;
             }
-            this.model.receive(D.sourceKey(d), d.field, { value, ecu: reply.ecu, sid: group.sid,
-                identifier: c.did, uds: reply.uds.slice() }, 'diagnostic');
+            const raw = { value, ecu: reply.ecu, sid: group.sid, identifier: c.did, uds: reply.uds.slice() };
+            if (group.candidates) {
+                const decoded = D.decode(d, raw);
+                if (decoded.state !== 'live') {
+                    this.model.transport(D.sourceKey(d), d.field, decoded.state, decoded.note); return;
+                }
+            }
+            this.model.receive(D.sourceKey(d), d.field, raw, 'diagnostic'); delivered = true;
         });
+        return delivered;
     }
     _finish(op, error, reply) {
         if (op.done) return;
         op.done = true; clearTimeout(op.timer);
         const diag = op.link.diag;
         diag.removeListener('frame', op.onFrame); diag.removeListener('tasError', op.onError); diag.removeListener('tasReject', op.onReject);
+        let delivered = false;
         if (this._current(op)) {
             if (error) this._status(op.group, error.state, error.note);
-            else if (reply) this._deliver(op.group, reply);
+            else if (reply) delivered = this._deliver(op.group, reply);
         }
         if (op.group.control) {
             if (!this._current(op)) op.group.reject(new Error('Exhaust control cancelled'));
@@ -343,6 +366,17 @@ class DiagnosticServices {
         // Never overlap calls or hammer a refused/unsupported DID at the fast success rate.
         op.group.nextAt = Date.now() + Math.max(error ? 5000 : 50,
             Number.isFinite(cadence) && cadence > 0 ? cadence : 1000);
+        if (this._current(op) && op.group.candidates) {
+            const group = op.group;
+            if (!error && delivered) {
+                this.picks[group.entries[0].d.id] = group.pick; group.failedCandidates = 0;
+            } else {
+                this._choose(group, (group.pick + 1) % group.candidates.length);
+                group.failedCandidates++;
+                group.nextAt = Date.now() + (group.failedCandidates < group.candidates.length ? 50 : Math.max(5000, cadence));
+                if (group.failedCandidates >= group.candidates.length) group.failedCandidates = 0;
+            }
+        }
         if (!error && op.group.refreshPriority) {
             op.group.refreshBy = Date.now() + Math.min.apply(null, op.group.entries.map(({ d }) => d.staleMs));
         }

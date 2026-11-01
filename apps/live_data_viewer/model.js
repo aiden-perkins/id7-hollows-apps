@@ -3,8 +3,8 @@ const D = require('./definitions');
 const definitionsById = {};
 D.definitions.forEach((d) => { definitionsById[d.id] = d; });
 class Model {
-    constructor(storage, changed) {
-        this.storage = storage; this.changed = changed; this.settings = storage.loadSettings();
+    constructor(storage, changed, saveFailed) {
+        this.storage = storage; this.changed = changed; this.saveFailed = saveFailed; this.settings = storage.loadSettings();
         this.definitions = definitionsById;
         this.startedAt = Date.now(); this.readings = {}; this.active = new Set();
         D.definitions.forEach((d) => { this.readings[d.id] = {
@@ -15,7 +15,13 @@ class Model {
     }
     configure(key, value) {
         const s = Object.assign({}, this.settings, { [key]: value });
-        this.storage.settings(s); this.settings = s; this.changed();
+        this.storage.settings(s); this.settings = s;
+        if (key === 'boostSource') {
+            const r = this.readings.boost;
+            r.min = null; r.max = null; r.history = []; r.breakNext = true; r.inputSignature = null;
+            this.updateDerived(Date.now());
+        }
+        this.changed();
     }
     activate(ids) {
         this.active = new Set(ids);
@@ -59,11 +65,23 @@ class Model {
         this.updateDerived(now);
         this.changed();
     }
+    boostFromDme() {
+        if (!this.readings.boostAbsolute.collecting || this.settings.boostSource === 'fes') return false;
+        if (this.settings.boostSource === 'dme') return true;
+        return this.state(definitionsById.boostFes).state !== 'live' || !this.settings.boostSeen.includes('boostFes');
+    }
     record(d, r, now) {
         if (r.decoded.state !== 'live') { this.gap(r); return; }
         r.lastValid = { value: r.decoded.value, unit: r.decoded.unit || '', at: now };
         if (!d.numeric || !Number.isFinite(r.decoded.value)) return;
         const value = r.decoded.value;
+        if ((d.id === 'boostFes' || d.id === 'boostDme') && !this.settings.boostSeen.includes(d.id)) {
+            if (r.firstBoost === undefined) r.firstBoost = value;
+            else if (Math.abs(value - r.firstBoost) >= 0.03 * 14.503773773020923) {
+                this.settings.boostSeen = this.settings.boostSeen.concat(d.id);
+                try { this.storage.settings(this.settings); } catch (error) { this.saveFailed(error); }
+            }
+        }
         r.min = r.min === null ? value : Math.min(r.min, value);
         r.max = r.max === null ? value : Math.max(r.max, value);
         let point = r.history[r.history.length - 1];
@@ -100,18 +118,36 @@ class Model {
             return { state: 'live', value: bar * 14.503773773020923, unit: 'psi',
                 quality: 'TPMS normalized from reported vehicle pressure unit ' + unit.value };
         }
+        if (d.id === 'boostDme') {
+            const absolute = this.state(definitionsById.boostAbsolute);
+            if (absolute.state !== 'live') return { state: absolute.state,
+                note: 'Diagnostic boost requires fresh absolute pressure: ' + (absolute.note || absolute.state) };
+            const ambient = this.readings.barometricPressure.lastValid;
+            const value = (absolute.value - (ambient ? ambient.value : 101.3)) * 0.14503773773020923;
+            if (!Number.isFinite(value) || value < -14.503773773020923 || value > 4 * 14.503773773020923) {
+                return { state: 'invalid', note: 'Diagnostic boost outside M Vitals -1 to 4 bar range' };
+            }
+            return { state: 'live', value, unit: 'psi', quality: 'M Vitals absolute-minus-ambient conversion; ' +
+                (ambient ? 'last measured ambient ' + ambient.value + ' kPa, age ' + (now - ambient.at) + ' ms' :
+                    'estimated ambient 101.3 kPa (no measured ambient available)') };
+        }
         if (d.preferred) {
-            for (const id of d.dependsOn) {
+            const boost = d.id === 'boost', choice = this.settings.boostSource;
+            const ids = boost && choice !== 'auto' ? [choice === 'fes' ? 'boostFes' : 'boostDme'] : d.dependsOn;
+            for (const id of ids) {
+                if (boost && choice === 'auto' && !this.settings.boostSeen.includes(id)) continue;
                 const source = definitionsById[id], value = this.state(source);
                 if (value.state === 'live' && Number.isFinite(value.value) && value.unit === d.unit) {
                     return Object.assign({}, value, { sourceId: id,
                         quality: source.name + ': ' + (value.quality || source.notes) });
                 }
             }
-            return { state: 'unavailable', note: 'No fresh supported temperature source: ' +
-                d.dependsOn.map((id) => definitionsById[id].name + ' (' + this.state(definitionsById[id]).state + ')').join(', ') };
+            return { state: 'unavailable', note: boost ?
+                'No fresh selected boost source' + (choice === 'auto' ? '; Auto waits for 0.03 bar variation to confirm a source' : '') :
+                'No fresh supported temperature source: ' +
+                    ids.map((id) => definitionsById[id].name + ' (' + this.state(definitionsById[id]).state + ')').join(', ') };
         }
-        if (d.id === 'boost' || d.id === 'exhaust' || d.id === 'frontPower' || d.id === 'rearPower' || d.id === 'gForce') {
+        if (d.id === 'exhaust' || d.id === 'frontPower' || d.id === 'rearPower' || d.id === 'gForce') {
             const ids = d.dependsOn, a = this.readings[ids[0]], b = this.readings[ids[1]];
             const first = this.state(definitionsById[ids[0]]), second = this.state(definitionsById[ids[1]]);
             if (first.state !== 'live' || second.state !== 'live') return {
@@ -119,10 +155,9 @@ class Model {
                     [first.state, second.state].includes('error') ? 'error' :
                         [first.state, second.state].includes('unavailable') ? 'unavailable' :
                             [first.state, second.state].includes('stale') ? 'stale' : 'waiting',
-                note: 'Requires both fresh ' + (d.id === 'boost' ? 'absolute and ambient pressure' :
-                    d.id === 'exhaust' ? 'DME electrical output readings; tester commands are not substituted' :
-                        d.id === 'gForce' ? 'lateral and longitudinal acceleration' :
-                            'crankshaft horsepower and reported transfer-case torque share') };
+                note: 'Requires both fresh ' + (d.id === 'exhaust' ? 'DME electrical output readings; tester commands are not substituted' :
+                    d.id === 'gForce' ? 'lateral and longitudinal acceleration' :
+                        'crankshaft horsepower and reported transfer-case torque share') };
             if (Math.abs(a.at - b.at) > d.maxSkewMs) return { state: 'stale', note: 'Input deliveries are too far apart' };
             if (d.id === 'gForce') {
                 if (first.unit !== 'g' || second.unit !== 'g' || !Number.isFinite(first.value) || !Number.isFinite(second.value)) {
@@ -147,13 +182,8 @@ class Model {
                 return { state: 'live', value: first.value * (d.id === 'rearPower' ? rear : 1 - rear), unit: 'hp',
                     quality: 'Estimated crankshaft HP allocated by reported torque share; assumes equal axle speeds and no drivetrain losses, not measured axle HP' };
             }
-            if (d.id === 'exhaust') return { state: 'live', value: first.value === second.value ? first.value : 'MIXED',
+            return { state: 'live', value: first.value === second.value ? first.value : 'MIXED',
                 quality: 'Both current DME electrical output bands; mechanical flap position unmeasured' };
-            if (first.unit !== 'hPa' || second.unit !== 'hPa' || now - a.at > d.staleMs || now - b.at > d.staleMs) {
-                return { state: 'stale', note: 'Boost requires fresh pressure readings in hPa' };
-            }
-            return { state: 'live', value: Math.max(0, (first.value - second.value) * 0.014503773773020923), unit: 'psi',
-                quality: 'Actual pre-throttle minus measured ambient pressure, floored at zero; local delivery skew ' + Math.abs(a.at - b.at) + ' ms' };
         }
         const rpm = this.readings.rpm, torque = this.readings.torque;
         const speed = this.state(definitionsById.rpm);
@@ -181,8 +211,9 @@ class Model {
             if (d.preferred && r.sourceId !== r.decoded.sourceId) { this.gap(r); r.sourceId = r.decoded.sourceId; }
             if (r.decoded.state !== 'live') { this.gap(r); return; }
             // Only a new input delivery creates a derived sample.
-            const signature = d.id === 'horsepower' && this.readings.rpm.decoded.value === 0 ?
-                this.readings.rpm.samples + ':stopped' : inputs.map((input) => input.samples).join(':');
+            const signature = d.id === 'boost' ? r.decoded.sourceId + ':' + this.readings[r.decoded.sourceId].samples :
+                d.id === 'horsepower' && this.readings.rpm.decoded.value === 0 ?
+                    this.readings.rpm.samples + ':stopped' : inputs.map((input) => input.samples).join(':');
             if (r.inputSignature === signature) return;
             if (r.at && now - r.at > d.staleMs) this.gap(r);
             r.inputSignature = signature; r.at = now; r.samples++;
@@ -215,7 +246,7 @@ class Model {
     }
     snapshot(d) {
         const r = this.readings[d.id], now = Date.now(), current = this.state(d);
-        return this.storage.snapshot({ schemaVersion: 1, savedAt: now, definitionVersion: 7,
+        return this.storage.snapshot({ schemaVersion: 1, savedAt: now, definitionVersion: 8,
             signal: { id: d.id, name: d.name, category: d.page, group: d.group, kind: d.kind,
                 interface: d.source ? D.IF[d.source] : null, instance: d.instance || '1',
                 field: d.field || null, member: d.member || null, sourceLead: d.lead || null,

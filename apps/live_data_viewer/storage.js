@@ -5,7 +5,8 @@ class Storage {
     constructor(dir) { this.dir = dir; this.error = ''; this.blocked = false; this.serial = 0; }
     loadSettings() {
         const defaults = { schemaVersion: 1, units: 'US', precision: 3, dateFormat: 'US12',
-            order: ['driving', 'dynamics', 'temperatures', 'health'], trendSeconds: 180, refreshMs: 100 };
+            order: ['driving', 'dynamics', 'temperatures', 'health'], trendSeconds: 180, refreshMs: 100,
+            boostSource: 'auto', boostSeen: [] };
         try {
             const s = JSON.parse(fs.readFileSync(path.join(this.dir, 'settings.json'), 'utf8'));
             if (!s || s.schemaVersion !== 1 || s.units !== 'US' || s.precision !== 3 || s.dateFormat !== 'US12' ||
@@ -15,7 +16,9 @@ class Storage {
                 !['driving', 'temperatures', 'health'].every((id) => s.order.includes(id))) throw new Error('Unsupported schema or invalid preferences');
             const order = s.order.slice();
             if (!order.includes('dynamics')) order.splice(order.indexOf('driving') + 1, 0, 'dynamics');
-            return Object.assign(defaults, { order, trendSeconds: s.trendSeconds, refreshMs: s.refreshMs });
+            return Object.assign(defaults, { order, trendSeconds: s.trendSeconds, refreshMs: s.refreshMs,
+                boostSource: ['auto', 'fes', 'dme'].includes(s.boostSource) ? s.boostSource : 'auto',
+                boostSeen: Array.isArray(s.boostSeen) ? s.boostSeen.filter((id) => ['boostFes', 'boostDme'].includes(id)) : [] });
         } catch (e) {
             if (e.code !== 'ENOENT') { this.error = 'Settings preserved: ' + e.message; this.blocked = true; }
             return defaults;

@@ -2,7 +2,7 @@
   "id": "live_data_viewer",
   "title": "Live Data Viewer",
   "description": "Performance meters, front/rear active anti-roll dynamics, rolling temperatures and eight-cylinder engine-health comparison",
-  "version": "1.7.2",
+  "version": "1.7.3",
   "vendor": "custom",
   "loggingId": "OA9E",
   "iconGlyph": "LIVE",
@@ -21,7 +21,8 @@
     "de.bmw.infotainment.drivingexcitement.FES": {
       "statusFESVehicleDynamicSwitchHMI": "rs",
       "statusDSCSwitchHMI": "rs",
-      "statusActualValueTorque2": "rs"
+      "statusActualValueTorque2": "rs",
+      "statusSwitchDriveDynamicSport2": "rs"
     },
     "de.bmw.infrastructure.analytics.BasicDataSet": {
       "basicDataSet": "s"
@@ -80,6 +81,14 @@
     {
       "key": "refreshMs", "label": "Getter refresh", "type": "number", "unit": "ms", "default": 100,
       "steps": [100, 250, 500, 1000, 2000]
+    },
+    {
+      "key": "boostSource", "label": "Boost source", "type": "choice", "default": "auto",
+      "options": [["auto", "Auto (sport display, then DME)"], ["fes", "Sport display"], ["dme", "Engine unit (DME)"]]
+    },
+    {
+      "key": "boostNote", "label": "Boost updates", "type": "text",
+      "default": "M Vitals sources; immediate sport-display notifications; 100 ms getter / DME target, not guaranteed"
     },
     {
       "key": "trendSeconds", "label": "Recent graph window", "type": "number", "unit": "s", "default": 180,

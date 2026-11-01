@@ -54,8 +54,7 @@ function dial(cv, t, vm, id, title, box, color) {
     const supported = !!d.unit && !!spec && d.numeric && d.decoder !== 'unscaled' && !/^raw\b/i.test(d.unit);
     const range = spec || references[id][defaults[id]], s = get(vm, id), r = vm.model.readings[id];
     // Presentation only: retain the signed physical samples and extrema in the model.
-    const displayed = (value) => Number.isFinite(value) ?
-        id === 'boost' ? clamp(value, 0, 40) : Math.max(0, value) : null;
+    const displayed = (value) => Number.isFinite(value) ? Math.max(0, value) : null;
     const n = displayed(supported ? numeric(vm, id) : null);
     const scale = Math.min(box.w / 352, box.h / 320);
     const cx = box.x + box.w / 2, cy = box.y + box.h / 2 + 12 * scale;

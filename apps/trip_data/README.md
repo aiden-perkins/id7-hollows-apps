@@ -1,12 +1,13 @@
 # Trip Data
 
 > Custom graphical dashboards and views, with Settings as the only native screen.
-> Based on the original design from commit 4783f6a; source-dependent limits remain explicit.
+> Version 1.4 adds GPS-distance recording, engine-session automation and history records.
 
 ## Goal
 
-Record trips and show useful driving, fuel, elevation and gear statistics, with
-speed, MPG and elevation graphs. Tailor units and presentation to the M850i.
+Record trips and show driving, elevation and gear statistics, with GPS-derived
+distance and coverage-aware graphs. Fuel use and MPG remain unavailable without a
+validated consumption source. Units and presentation are tailored to the M850i.
 
 ## Pages, screens and navigation
 
@@ -16,9 +17,10 @@ Only Settings opens a native iDrive screen.
 
 ### How to move around
 
-The app opens on **Current trip**. A page menu provides Current trip, Trip history
-and Settings. Elevation, Fuel and Gears are views of a particular trip:
-open them from the current trip or a saved trip's summary.
+The app opens on **Current trip**. A page menu provides Current trip, Trip history,
+History records and Settings. Elevation, Fuel and Gears are views of a particular
+trip: open them from the current trip or a saved trip's summary. History records
+is also accessible from Trip history.
 
 ```text
 Page menu
@@ -31,6 +33,7 @@ Page menu
       Elevation
       Fuel
       Gears
+  History records
   Settings
 ```
 
@@ -54,29 +57,33 @@ missing. A requested metric remains unavailable until its source is understood.
 finished or interrupted). The left live panel contains speed, gear, distance,
 elapsed timer, altitude, top speed, fuel used and moving time. The remaining width
 holds a wide speed graph above side-by-side MPG and elevation graphs, all against
-elapsed time. The speed graph title includes average speed and moving average
-speed; the MPG graph title includes average MPG. There is no separate averages panel.
+elapsed time. The speed graph title includes GPS-covered average speed and
+moving-covered average speed; the MPG graph title includes average MPG when
+available. There is no separate averages panel.
 
-**Actions and navigation:** support both manual and automatic recording. Start begins
-a trip manually; ignition-on starts one automatically if none is active. Finish or
-ignition-off saves and closes it. There is no manual Pause or Resume. Stationary
-periods at or below 1 mph remain part of the trip. Links open this trip's Elevation,
-Fuel and Gears. History and Settings are available through the page menu.
+**Actions and navigation:** Start begins a trip manually; Finish saves and closes
+it. Optional automatic recording uses sustained engine RPM, not ignition state;
+see Trip lifecycle for thresholds and restart behavior. There is no manual Pause
+or Resume. Stationary periods at or below 1 mph remain part of the trip. Links
+open this trip's Elevation, Fuel and Gears. History and Settings are available
+through the page menu.
 
-Before manual Start or ignition-on, show that no trip is active rather than invented totals.
-After Finish, open the saved trip summary. After an interruption, offer recovery
-and clearly identify the missing interval.
+Before a start, show that no trip is active rather than invented totals. After
+manual Finish, open the saved trip summary. After an interruption, show the missing
+interval and offer recovery for version-2 recordings. Version-1 recordings can be
+closed and viewed, but cannot resume under the new distance policy.
 
-**Needed:** trip state, timing, valid speed or distance data and periodic storage
-checkpoints. Fuel readings are optional; their absence must not prevent recording
-speed, time and distance.
+Recording time does not require optional measurements. Missing GPS, speed, gear,
+RPM or altitude creates gaps in the affected statistics rather than stopping the
+whole recording. Missing RPM is unknown, not an automatic engine-off event.
 
 ### Embedded trip graphs
 
 The main trip page includes a wide speed graph with rolling fuel economy and
 elevation graphs side by side below it. All three use elapsed time on the
-horizontal axis. Average and moving average speeds appear in the speed graph title;
-average MPG appears in the MPG graph title. Label axes and units, preserve gaps for
+horizontal axis. GPS-covered and moving-covered average speeds appear in the speed
+graph title; legacy trips retain speed-covered averages. Average MPG appears when
+available. Label axes and units, preserve gaps for
 missing samples and extend current-trip plots as samples arrive. Saved-trip plots
 use stored samples. There is no separate Graphs tab.
 
@@ -93,9 +100,12 @@ trip are visible. For a current trip, also show the latest valid altitude.
 
 **Actions and navigation:** Back or Trip summary returns to this trip's summary.
 
-**Needed:** altitude samples with their own validity, timestamps and documented
-reference. A valid GPS position alone does not establish valid altitude. Ascent,
-descent and vertical speed need documented filtering and noise thresholds.
+Altitude requires an independently valid 3D fix and height field; a valid position
+alone does not establish valid altitude. The existing altitude calculations are
+unchanged: ascent/descent use the recorded deadband, defaulting to 10 ft with 5,
+10 or 20 ft settings. Vertical speed uses adjacent valid altitude samples without
+additional smoothing. The height reference and actual vehicle response still
+need validation; display smoothing does not change calculated totals.
 
 ### Fuel: consumption and efficiency
 
@@ -116,10 +126,15 @@ distance. Tank-level changes are insufficient for accurate short-trip consumptio
 If consumption is unavailable, show that explicitly and keep the other trip views
 usable. Average MPG uses total matched distance and fuel, not averaged MPG samples.
 
+Version 1.4 has no validated consumption source. Fuel-used, MPG and economy
+records therefore remain explicitly unavailable; tank-level changes are not a
+substitute. Speed-band duration and covered GPS distance remain usable.
+
 ### Gears: time, shifts and engine-speed statistics
 
-**Layout and data:** show all eight forward gears together in a table of duration,
-distance, shift count and coverage, without scrolling. Add fuel used and MPG per
+**Layout and data:** show supported forward gear states 1–10 together in a table
+of duration, distance, shift count and coverage, without scrolling. This is the
+source's supported range, not a claim that the M850i has ten gears. Add fuel used and MPG per
 gear only when matching consumption data exists. One summary card combines RPM
 minimum, maximum, time-weighted average and total engine revolutions when supported,
 along with RPM coverage and time in Park, Reverse, Neutral, combined N/P and unknown
@@ -128,9 +143,14 @@ states. An optional gear-by-speed table can combine the gear and speed-band brea
 **Actions and navigation:** open from the selected trip's summary; Back returns to
 that summary. This page describes recorded behavior and does not control the gearbox.
 
-**Needed:** timestamped gear states and a defined transition-counting rule. RPM
-statistics require engine-speed samples; efficiency per gear additionally needs
-aligned distance and fuel. Missing fuel does not prevent time-in-gear statistics.
+Actual gear comes first from `VehicleInformation.statusGearboxDrive`, with
+`DataPowerTrain2` as an explicit fallback. These change-driven states are retained
+while their provider remains connected; disconnects and retries break continuity.
+Park and Neutral remain combined N/P unless an explicit state distinguishes them.
+Do not infer a forward gear from speed or RPM. Count forward-gear transitions only
+across continuous samples from the same provider, connection epoch and source.
+RPM statistics use decoded engine-speed samples. Missing fuel does not prevent
+time-in-gear statistics.
 
 ### Trip history and saved trip summary: revisit a recording
 
@@ -149,20 +169,36 @@ the selected entry. Back from history returns to the page menu.
 **Needed:** a saved trip index, summaries, sample chunks and source / quality metadata.
 Interrupted trips must remain identifiable and recoverable without fabricated data.
 
+### History records
+
+Seven records summarize finished, non-demo trips: top speed, highest elevation,
+lowest elevation, longest distance, shortest distance, best average MPG and worst
+average MPG. Each requires at least 95% coverage for its metric, counting missing
+wall-clock intervals against coverage. Distance and economy records additionally
+exclude interrupted or recovered trips and trips with recording gaps.
+
+Each available record identifies its trip, date, coverage and calculation source.
+Selecting it opens the saved trip; Back returns to history. Ties select the
+earliest trip start, then trip ID. Legacy distances remain labelled as
+speed-derived instead of being silently compared as GPS measurements. Economy
+records remain unavailable without validated fuel consumption.
+
 ### Settings: recording, presentation and storage preferences
 
-**Layout and data:** grouped settings for manual and automatic recording, US units,
-date/time presentation, graph smoothing and recording detail. Moving means speed
-above 1 mph; no manual pause. Record both coordinates and altitude history. Keep
-all trips where storage permits, show storage usage and do not automatically delete.
+**Layout and data:** settings cover optional automatic recording, date/time
+presentation, graph smoothing and recording detail. Automatic engine-session
+recording defaults to off and is disabled in Demo and preview mode. Moving means
+speed above 1 mph; no manual pause. Record coordinates and altitude independently.
+Keep trips where storage permits; do not automatically delete old recordings.
 
 **Actions and navigation:** open from the page menu; Back returns to that menu.
-Explain that stationary time remains in total duration and that ignition-off ends
-the trip. Preserve calculation policies with saved trips so results stay interpretable.
+Source status separates GPS fix age from receipt age: repeated delivery of an old
+fix does not make it fresh, and frequent receipts do not establish GPS fix rate.
+Retry sources reconnects providers and clears the recorder's source-error hold.
 
-**Needed:** persisted preferences and documented defaults. Automatic recording needs
-a validated ignition-state source and reliable app lifecycle behavior;
-automatic recording is required, using ignition-on to start and ignition-off to finish.
+Preferences and the automatic restart hold are persisted. Automatic recording
+requires the app process to be running and is blocked by unresolved interrupted
+trips. Preserve each trip's calculation policy so saved results stay interpretable.
 
 ## Implementation details
 
@@ -177,7 +213,7 @@ Store timestamps and calculation precision independently of display formatting.
 
 ### How the app gets data
 
-The proposed flow is: head-unit sources -> subscriptions or bounded reads ->
+The flow is: head-unit sources -> subscriptions or bounded reads ->
 timestamped, decoded and validated samples -> trip recorder and calculations ->
 current summary, graphs and saved trip files. History reads those saved files.
 
@@ -192,44 +228,68 @@ calculations. Missing samples must create explicit coverage gaps, not invented
 movement, fuel use or gear states. Optional sources can fail independently without
 making all trip statistics unavailable.
 
-### Proposed implementation areas
+### GPS distance and source timing
+
+New trips calculate distance between accepted GPS positions, not by integrating
+vehicle speed. Coordinates are interpreted as WGS84 degrees; the catalog does
+not confirm that interpretation or expose horizontal accuracy. These assumptions
+and real vehicle fix cadence still need validation.
+
+Only valid 2D/3D positions with calendar-valid, advancing UTC fix timestamps can
+extend a GPS segment. Duplicate fixes do not add distance or refresh fix age.
+Backward/reset timestamps, invalid fixes, stale data and gaps over five seconds
+break continuity rather than bridging missing travel. Geodesic distance handles
+crossing the antimeridian.
+
+Fresh vehicle speed gates movement and rejects implausible position jumps; it is
+not a distance fallback. Stationary intervals contribute zero GPS drift distance.
+Missing speed leaves distance coverage gaps. Accepted segments are allocated to
+recorded gear and speed-band intervals by their above-1-mph moving duration; this
+is allocation of a GPS segment, not a measured path for each recorder tick.
+
+GPS UTC is mapped onto recorder intervals using the wall/monotonic clock offset.
+That mapping assumes the source UTC and head-unit clock agree. Recorder cadence,
+subscription receipts and new GPS fix cadence are separate measurements. Rejection
+limits protect calculations from obvious bad segments; they do not prove GPS
+accuracy or recover unobserved turns.
+
+### Implementation areas
 
 | Area | Responsibility |
 | --- | --- |
 | App definition and entry point under `apps/trip_data/` | App metadata, startup, shutdown and interruption recovery |
 | Screens and navigation | Current trip, history, saved summary, graphs, breakdowns and settings |
 | Source definitions and access | Signal mappings, subscriptions / reads, decoding, units and validity |
-| Trip recorder | Manual / ignition start and finish, timing, sample batches and checkpoints; no manual pause |
+| Trip recorder | Manual / engine-session start and finish, timing, sample batches and checkpoints; no manual pause |
 | Calculations | Distance, speed, fuel, altitude, gear and RPM statistics with coverage |
 | Storage and history | Trip index, summaries, sample chunks, annotations and retention |
 | Preferences | Units, thresholds, recording policy and presentation options |
-| Wrapper integration | Future app routing and packaging through the existing wrapper |
+| Wrapper integration | App routing and packaging through the existing wrapper |
 
-These are proposed responsibilities, not a fixed file structure. Use the upstream
-runtime and SDK through the wrapper; share suitable local research deliberately.
-The manifest defines a canvas MAIN and one native SETTINGS screen. The app uses
-the upstream canvas/renderer runtime through the wrapper.
+The app uses the upstream runtime and SDK through the wrapper. The manifest
+defines a canvas MAIN and one native SETTINGS screen; recording is independent
+of the selected graphical view.
 
 ### Metrics and calculation rules
 
-| Metric | Proposed definition / requirement |
+| Metric | Definition / requirement |
 | --- | --- |
 | Duration | Monotonic elapsed time while recording, including stationary periods; no manual pause |
 | Moving duration | Recorded intervals above 1 mph; speed <= 1 mph is stationary |
-| Distance | Valid vehicle distance delta where available; otherwise integrate valid speed over time |
-| Average speed | Recorded distance / recorded duration |
-| Average moving speed | Distance accumulated while moving / moving duration |
-| Top speed | Highest valid speed; record sample quality and avoid invalid spikes |
+| Distance | Accepted GPS geodesic segments only for new trips; no vehicle-speed fallback; legacy totals retain their original policy |
+| Average speed | GPS distance / GPS-distance-covered duration, not total trip duration; legacy trips retain speed-covered duration |
+| Average moving speed | GPS distance allocated to moving intervals / moving-distance-covered duration |
+| Top speed | Highest valid decoded vehicle-speed sample; record source quality and coverage |
 | Elevation graph | Valid altitude samples with gaps and optional display smoothing |
 | Net altitude | Last valid altitude minus first valid altitude; show coverage limitations |
-| Total ascent / descent | Sum filtered positive / negative altitude changes using a documented noise threshold |
+| Total ascent / descent | Sum accepted altitude changes using the recorded deadband, default 10 ft |
 | Minimum / maximum altitude | Extrema from accepted valid altitude samples |
-| Vertical speed | Altitude change / time over a defined interval, with smoothing |
-| Fuel used | Valid cumulative consumption delta or integration of a validated fuel-flow signal |
+| Vertical speed | Altitude change / time between adjacent valid samples; no additional calculation smoothing |
+| Fuel used | Unavailable until a cumulative-consumption or fuel-flow source is validated |
 | Average MPG | Total valid distance / corresponding valid fuel used; never average individual MPG readings |
 | Fuel-economy graph | Fuel economy over defined rolling windows; label window and data gaps |
 | Time in each gear | Accumulate valid gear-state intervals; keep unknown intervals separate |
-| Gear shifts | Count validated transitions; define handling of Park, Reverse, Neutral and missing samples |
+| Gear shifts | Forward-gear transitions within one continuous provider / connection epoch / source; exclude unknown and non-forward transitions |
 | RPM statistics | Minimum, maximum and time-weighted average of valid engine-speed samples |
 | Total engine revolutions | Integral of RPM over time divided by 60, with time measured in seconds |
 
@@ -255,9 +315,10 @@ the upstream canvas/renderer runtime through the wrapper.
 
 ### Data availability and research
 
-- Confirm actual speed, distance, gear and engine-speed fields and their units.
+- Validate the decoded vehicle speed, engine RPM and explicit gear sources on the car.
+- Confirm GPS coordinate units, UTC alignment, accuracy and actual advancing-fix rate.
 - Research a fuel-consumption source; Lab's tank and range data do not prove one exists.
-- Identify and validate ignition-on / ignition-off events for automatic recording, independently of automatic engine stop/start.
+- True ignition transitions remain unvalidated. RPM-based automation is an engine-session proxy; automatic engine stop/start can split recordings.
 - MGU Lab already investigates GPS height and validity. A valid position does not
   imply valid altitude, and the catalog does not specify the altitude reference.
 - Preserve source timestamps where available and capture monotonic receive times.
@@ -268,40 +329,45 @@ available through the current SDK or SOME/IP catalog.
 
 ### Trip lifecycle
 
-Required lifecycle:
+Implemented lifecycle:
 
-1. Start manually or automatically at ignition-on; capture start time and available source baselines. Do not start a second trip if one is already active.
-2. Record bounded batches and periodically checkpoint the active trip.
-3. Keep recording through stationary periods (speed <= 1 mph); no manual Pause or Resume. Mark missing samples as gaps.
-4. Manual Finish or ignition-off closes the trip and saves its summary and samples. After manual Finish, wait for another manual Start or the next ignition-on event.
-5. On restart, offer recovery of an interrupted trip without inventing missing data.
+1. Start manually, or enable automatic engine-session recording. Automatic start needs at least two seconds of fresh RPM at or above 400, with advancing deliveries in the same connection epoch. Never start a second active trip.
+2. Record bounded sample batches and periodically checkpoint the active trip.
+3. Keep recording through stationary periods (speed <= 1 mph); no manual Pause or Resume. Mark missing measurements and intervals as gaps.
+4. Manual Finish saves the trip. Automatic finish needs at least three seconds of confirmed live zero RPM. Missing/stale RPM or RPM between zero and 400 is unknown, not confirmed engine-off.
+5. After manual Finish with automation enabled, persist a restart hold. A sustained confirmed engine-off period clears the hold; a subsequent sustained running state can start another trip. Manual Start remains available.
+6. On restart, identify interrupted trips. Version-2 trips can resume with the missing wall-clock interval recorded as a gap; version-1 trips are close/view only and retain their original totals.
 
-Ignition-off ends the trip; the next ignition-on starts a new trip, including after a brief shutdown.
-Recording while another app is open or the head unit sleeps needs lifecycle research.
+This is not ignition detection. Automatic engine stop/start may split a session.
+The app process must be running to observe transitions; recording while another
+app is open or the head unit sleeps still needs vehicle lifecycle validation.
 
-### Proposed saved data and downloads
+### Saved data and downloads
 
-- `data/settings.json`: preferences, thresholds, units and schema version.
-- `data/trips/index.json`: small trip list with recording / finished / interrupted status.
-- `data/trips/<trip-id>/summary.json`: totals, coverage, sources and calculation version.
-- `data/trips/<trip-id>/samples-<sequence>.jsonl`: bounded sample chunks.
-- Optional events file for ignition / manual start and finish, gear changes and source availability changes.
+- `data/settings.json`: schema-1 preferences, thresholds, units and automatic restart hold.
+- `data/trips/index.json`: trip list with recording / finished / interrupted status.
+- `data/trips/<trip-id>/summary.json`: totals, coverage, sources and calculation policy.
+- `data/trips/<trip-id>/samples-000000001.jsonl`, then increasing nine-digit sequences: bounded sample chunks.
 
-These are proposed formats, not existing files. Use unique trip IDs, bounded writes
-and recoverable checkpoints. Keep graph downsampling separate from calculation data.
+New indexes, summaries and sample chunks use schema 2. Schema-1 recordings remain
+readable with their original speed-derived totals and policy; they are not
+recomputed as GPS trips and cannot resume. Existing settings retain schema 1.
+
+Storage uses unique trip IDs, bounded writes and recoverable checkpoints.
+Graph downsampling remains separate from calculation data.
 Retain all trips and samples where storage permits; do not automatically delete old trips.
 Show low storage clearly and preserve existing saved data if new recording cannot continue.
 No maximum recording duration is desired. If a technical limit is unavoidable,
 24 hours is the fallback target; make the limit visible and never silently truncate.
 
-Once implemented and installed, `download trip_data` can collect the app's saved
-storage. A future CSV export is a separate feature; the downloader copies raw files.
+Once installed, `download trip_data` can collect the app's saved storage.
+A future CSV export is a separate feature; the downloader copies raw files.
 Record both GPS coordinates and altitude history. Preserve their independent validity;
 missing altitude must not invalidate otherwise valid coordinates.
 
 ## Confirmed choices
 
-- Support manual Start / Finish and automatic ignition-on / ignition-off recording. A brief ignition shutdown ends the trip; the next ignition-on starts another.
+- Support manual Start / Finish and optional RPM-based engine-session recording, with explicit stop/start and lifecycle limits rather than claimed ignition detection.
 - Moving means speed > 1 mph; speed <= 1 mph is stationary and remains part of trip duration.
 - No manual Pause or Resume.
 - Use US units and three-decimal measurement display, with the date/time format specified above.
@@ -310,20 +376,24 @@ missing altitude must not invalidate otherwise valid coordinates.
 - Retain everything where storage permits, without automatic deletion.
 - No maximum recording duration unless technically necessary; 24 hours is the fallback target.
 
-## Remaining preference
+## Recording interval
 
-- Sample frequency / recording detail is still undecided; retain the selected detail throughout the trip rather than silently reducing it.
+The recorder offers 500, 1,000 or 2,000 ms intervals, defaulting to 1,000 ms.
+The selected detail is captured in each trip's policy and does not silently
+decrease during recording. A faster recorder interval does not create new GPS
+fixes or increase the source's measurement rate.
 
 ## Graphical implementation
 
-Version 1.2 revises the graphical layout and navigation. Version 1.1 replaced the
-native-screen implementation using the original design recovered with read-only
-Git history from commit `4783f6a`.
+Version 1.4 adds GPS-distance coverage, engine-session recording, explicit
+change-driven gear states, decoded speed/RPM and history records. Version 1.2
+revised the graphical layout and navigation. Version 1.1 replaced the native-screen
+implementation using the original design recovered from commit `4783f6a`.
 
 - `MAIN` is a 1600 x 520 canvas using the same `ctx.canvas`, renderer and
   `kit/gauges.frame` path as upstream dashboards. The layout uses large trip
   readouts, M-color accents, coverage bars and custom chart/table/card views.
-- Trip, Elevation, Fuel, Gears, History and the page menu are logical
+- Trip, Elevation, Fuel, Gears, History, History records and the page menu are logical
   views inside that canvas. Recovery actions, delete confirmation and the
   name/annotation keyboard are graphical too. `SETTINGS` is the sole native
   screen; it returns to the same graphical view.
@@ -335,15 +405,16 @@ Git history from commit `4783f6a`.
   The Trip page has a wide speed graph above MPG and elevation graphs; averages
   are shown in graph titles and moving time is in the live vehicle panel.
 - Fuel has paged speed-band rows and a Totals/Coverage column switch. Gears shows
-  all eight forward gears at once, with a Totals/Coverage switch and one summary
+  supported forward states 1–10 at once, with a Totals/Coverage switch and one summary
   card. Saved-trip identity is retained across views. History keeps its selected
   trip when returning from a summary. Recording remains independent of view changes.
 - The graphical keyboard supports case, spaces, punctuation, caret movement,
   erase, name/annotation selection, Save and Cancel. Delete defaults to Cancel
   and requires a separate confirmation.
-- Existing recording, checkpoint, recovery and sample formats remain at schema
-  version 1. Existing trips and settings do not need conversion. Plot projections
-  remain bounded; presentation smoothing does not alter recordings or totals.
+- New recordings use schema 2 and retain their GPS-distance calculation policy.
+  Legacy recordings remain readable and closeable without rewriting their totals;
+  only version-2 recordings can resume. Plot projections remain bounded, and
+  presentation smoothing does not alter recordings or totals.
 
 ### Packaging and preview
 
@@ -361,13 +432,17 @@ These commands are instructions; they were not run during implementation.
 
 ### Data limits
 
-The graphical remake preserves the existing source-quality restrictions.
-Validated ignition transitions and calibrated consumption remain unavailable;
-automatic recording cannot yet operate. Moving-speed and RPM scaling still need
-vehicle validation, so their physical values and dependent totals stay
-unavailable. Recording time, independently valid GPS coordinates/height and
-recognized gear states remain usable when delivered. No preview data is invented
-to fill missing vehicle measurements.
+Vehicle speed and RPM now use decoded BMW fields, and gear uses explicit
+change-driven states with documented fallback precedence. Their source meanings
+and physical response still need vehicle validation. GPS coordinate units,
+horizontal accuracy, UTC alignment and actual fix cadence remain unconfirmed;
+altitude validity is independent of position and its reference remains unknown.
+
+True ignition transitions and calibrated fuel consumption remain unavailable.
+Optional RPM-based automation therefore records engine sessions, not proven
+ignition journeys. Fuel-used and MPG results remain unavailable. Demo is
+explicitly labelled, memory-only and excluded from real history records; missing
+vehicle measurements are never filled with demo data in real recordings.
 
 Source review only. Tests, linters, formatters, builds, compilation and preview
 execution were not run. No generated bundles or executable files were modified.

@@ -13,7 +13,7 @@ mgu.run({
         let closed = false, loop = null, dirty = true, immediate = true, lastDraw = 0, activeKey = '';
         const state = { page: ctx.settings.get('section') || 'driving', exhaustMode: null, notice: '', noticeUntil: 0 };
         const changed = () => { dirty = true; if (loop) loop.kick(); };
-        const model = new Model(storage, changed);
+        const model = new Model(storage, changed, (error) => { tell(error.message); ctx.log.warn(error); });
         Object.assign(ctx.settings.values, model.settings, { categoryOrder: model.settings.order.join(',') });
         ctx.settings.schema.filter((s) => s.type === 'text').forEach((s) => { ctx.settings.values[s.key] = s.default; });
         ctx.settings.values.lastError = storage.error || 'None';
@@ -55,7 +55,7 @@ mgu.run({
         ctx.settings.onChange((key) => {
             if (closed) return;
             try {
-                if (key === 'trendSeconds' || key === 'refreshMs') configure(key, ctx.settings.get(key));
+                if (key === 'trendSeconds' || key === 'refreshMs' || key === 'boostSource') configure(key, ctx.settings.get(key));
                 else if (key === 'categoryOrder') configure('order', ctx.settings.get(key).split(','));
                 else if (key === 'demoDriveMode') {
                     if (demo) demo.driveMode = ctx.settings.get('demoDriveMode');
