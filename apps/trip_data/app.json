@@ -2,7 +2,7 @@
   "id": "trip_data",
   "title": "Trip Data",
   "description": "Custom graphical trip dashboard, history, elevation, fuel, gear statistics and recording recovery",
-  "version": "1.3.1",
+  "version": "1.4.0",
   "vendor": "custom",
   "loggingId": "OA9F",
   "iconGlyph": "TRIP",
@@ -18,7 +18,8 @@
       "statusEngineSpeed2": "rs"
     },
     "de.bmw.infrastructure.VehicleInformation": {
-      "DataPowerTrain2": "s"
+      "DataPowerTrain2": "s",
+      "statusGearboxDrive": "s"
     },
     "de.bmw.infotainment.controlelements.FrontCCU": {
       "statusRotaryEncoderState": "rs"
@@ -57,7 +58,7 @@
         [
           "button",
           "PREF_AUTO",
-          "Automatic ignition recording"
+          "Automatic engine-session recording"
         ],
         [
           "button",

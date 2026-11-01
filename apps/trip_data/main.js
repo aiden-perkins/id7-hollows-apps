@@ -10,20 +10,23 @@ const Demo = require('./demo');
 mgu.run({
     async start(ctx) {
         const ui = ctx.ui, storage = new Storage(ctx.dataDir);
-        let dirty = true, loop = null, closed = false, lastDraw = 0, busy = false;
-        const changed = () => { dirty = true; if (loop) loop.kick(); };
+        let dirty = true, loop = null, closed = false, lastDraw = 0, busy = false, pendingSession = null;
+        const changed = (event) => {
+            if (event && /^automatic-/.test(event.type)) pendingSession = event;
+            dirty = true; if (loop) loop.kick();
+        };
         const sources = new Sources(ctx, changed), recorder = new Recorder(storage, sources, changed);
         Object.assign(ctx.settings.values, recorder.settings);
         let demo = ctx.settings.get('demo') === 'on' ? new Demo(recorder.settings) : null;
         const state = {
             page: ctx.settings.get('section') || 'trip', saved: null, focus: 0, focusMemory: {}, modal: null, draft: null,
-            history: [], tablePages: { fuel: 0 }, tableCoverage: { fuel: false, gears: false }, projection: null, projectionId: null,
+            history: [], records: [], followAutomatic: true, tablePages: { fuel: 0 }, tableCoverage: { fuel: false, gears: false }, projection: null, projectionId: null,
             graphLoading: false, loadingId: null, graphRequest: 0, notice: '', noticeUntil: 0, usageBytes: null,
             graph: { metric: 'speed', axis: 'time', zoomSeconds: 0, cursorAt: null },
         };
         const pages = ['trip', 'elevation', 'fuel', 'gears', 'history'];
         const selectedTrip = () => state.saved || (demo ? demo.trip : recorder.active);
-        const focusKey = () => ['history', 'menu', 'edit', 'actions'].includes(state.page) ? state.page :
+        const focusKey = () => ['history', 'records', 'menu', 'edit', 'actions'].includes(state.page) ? state.page :
             state.page + ':' + (state.saved ? state.saved.id : 'current');
         const tell = (message) => { state.notice = message; state.noticeUntil = Date.now() + 7000; changed(); };
         const action = (id, label, run, enabled, description) => ({ id, label, run, enabled: enabled !== false, description: description || '' });
@@ -43,10 +46,11 @@ mgu.run({
             changed();
         }
         async function refreshHistory() {
-            if (demo) { state.history = [demo.saved]; changed(); return; }
+            if (demo) { state.history = [demo.saved]; state.records = V.records(state.history); changed(); return; }
             const loaded = storage.history().filter((s) => !recorder.active || recorder.active.id !== s.id);
             const ids = state.history.map((s) => s.id);
             state.history = ids.map((id) => loaded.find((s) => s.id === id)).filter(Boolean).concat(loaded.filter((s) => !ids.includes(s.id)));
+            state.records = V.records(state.history);
             recorder.history = storage.history();
             recorder.interrupted = recorder.history.filter((s) => s.status !== 'finished' && (!recorder.active || s.id !== recorder.active.id));
             state.usageBytes = storage.usage();
@@ -76,16 +80,16 @@ mgu.run({
         }
         async function openPage(page) {
             route(page);
-            if (page === 'history') await refreshHistory();
+            if (page === 'history' || page === 'records') await refreshHistory();
             if (['trip', 'elevation', 'fuel'].includes(page)) await loadProjection();
         }
         async function showCurrent() {
             if (state.saved) resetProjection();
-            state.saved = null; route('trip'); await loadProjection();
+            state.saved = null; state.followAutomatic = true; route('trip'); await loadProjection();
         }
         async function showSaved(trip) {
             if (!state.saved || state.saved.id !== trip.id) resetProjection();
-            state.saved = trip; route('trip'); await loadProjection();
+            state.saved = trip; state.followAutomatic = false; route('trip'); await loadProjection();
         }
         async function settings() {
             if (busy) return;
@@ -100,7 +104,8 @@ mgu.run({
             try { await fn(); } finally { busy = false; changed(); }
         }
         async function start() {
-            recorder.start(); state.saved = null; resetProjection(); route('trip'); await loadProjection(); tell('Recording started');
+            recorder.start(); state.saved = null; state.followAutomatic = true;
+            resetProjection(); route('trip'); await loadProjection(); tell('Recording started');
         }
         async function finish() {
             const trip = recorder.finish('manual');
@@ -110,7 +115,8 @@ mgu.run({
         }
         async function recover() {
             const id = state.saved && state.saved.id; if (!id) return;
-            await recorder.recover(id); state.saved = null; resetProjection(); route('trip'); await loadProjection();
+            await recorder.recover(id); state.saved = null; state.followAutomatic = true;
+            resetProjection(); route('trip'); await loadProjection();
             tell('Trip recovered. The missing interval remains a gap.');
         }
         async function closeInterrupted() {
@@ -187,17 +193,24 @@ mgu.run({
                 ];
             }
             if (state.page === 'history') return state.history.map((s) => action(s.id, s.name, () => showSaved(s))).concat([
+                action('records', 'History records', () => openPage('records')),
                 action('refresh', 'Refresh history', refreshHistory), action('current', 'Current trip', showCurrent), action('menu', 'Page menu', () => route('menu')),
+            ]);
+            if (state.page === 'records') return state.records.map((record) => action(record.id, record.label,
+                () => showSaved(record.trip), !!record.trip, record.detail)).concat([
+                action('history', 'Trip history', () => openPage('history')), action('current', 'Current trip', showCurrent),
             ]);
             if (state.page === 'menu') return [
                 action('current', 'Current trip', showCurrent, true, active ? 'Recording / ' + V.duration(active.stats.durationMs) : 'Start and review your current drive'),
                 action('history', 'Trip history', () => openPage('history'), true, recorder.interrupted.length ? 'Interrupted trips await recovery' : 'Saved trips, notes and recovery'),
+                action('records', 'History records', () => openPage('records'), true, 'Observed speed, elevation, distance and economy records'),
                 action('settings', 'Settings', settings, true, 'Recording detail, units and presentation'),
             ];
             if (state.page === 'actions') return [
                 action('edit', 'Rename / annotate', edit, !!saved && saved.status === 'finished', 'Edit the saved trip with the graphical keyboard'),
                 action('delete', 'Delete saved trip', confirmDelete, !!saved && saved.status === 'finished', 'Review and confirm before deleting'),
-                action('recover', 'Recover recording', () => exclusive(recover), !!saved && saved.status !== 'finished' && !active, 'Continue with an explicit missing interval'),
+                action('recover', 'Recover recording', () => exclusive(recover), !!saved && saved.status !== 'finished' &&
+                    saved.policy.calculationVersion === 2 && !active, 'Continue GPS recording with an explicit missing interval; legacy speed trips can only be closed'),
                 action('close', 'Close interrupted trip', () => exclusive(closeInterrupted), !!saved && saved.status !== 'finished' && !active, 'Keep only the samples already recorded'),
             ];
             if (state.page === 'elevation') return [];
@@ -234,13 +247,19 @@ mgu.run({
             lastSelect = Date.now();
             const list = state.modal ? state.modal.actions : availableActions(), index = state.modal ? state.modal.focus : state.focus;
             const chosen = list[index]; if (!chosen) return;
-            if (!chosen.enabled) { tell(recorder.interrupted.length && !recorder.active ? 'Recover or close interrupted trips in History first.' : 'This action is unavailable for the selected trip.'); return; }
+            if (!chosen.enabled) {
+                tell(state.page === 'records' ? chosen.description || 'No eligible recorded trip for this record.' :
+                    recorder.interrupted.length && !recorder.active ? 'Recover or close interrupted trips in History first.' :
+                        'This action is unavailable for the selected trip.');
+                return;
+            }
             await chosen.run(); changed();
         }
         function back() {
             if (busy) return;
             if (state.modal) { state.modal = null; changed(); return; }
             if (state.page === 'edit') { state.draft = null; route('trip'); return; }
+            if (state.page === 'records') { route('history'); return; }
             if (['elevation', 'fuel', 'gears', 'actions'].includes(state.page)) { route('trip'); return; }
             if (state.page === 'trip' && state.saved) { route('history'); return; }
             if (state.page === 'menu') return showCurrent();
@@ -249,7 +268,7 @@ mgu.run({
         async function changePage(steps) {
             if (busy) return;
             if (state.modal || state.page === 'edit') { back(); return; }
-            const index = pages.indexOf(state.page);
+            const index = pages.indexOf(state.page === 'records' ? 'history' : state.page);
             await openPage(pages[(index + steps + pages.length) % pages.length]);
         }
         const bind = (name, fn) => ui.onClick(name, async () => {
@@ -261,8 +280,12 @@ mgu.run({
         function nativeText(name, value) { if (labels[name] !== value) { labels[name] = value; ui.text(name, value); } }
         function refreshSettings() {
             const p = recorder.settings;
+            const gps = sources.sample(mono()).gps;
+            const age = (ms) => Number.isFinite(ms) ? V.number(ms / 1000, 's') : 'unknown';
+            const gpsStatus = sources.mode === 'full' ? 'GPS ' + (gps.positionState || gps.state) +
+                ': fix age ' + age(gps.fixAgeMs) + ', receipt age ' + age(gps.ageMs) : 'GPS distance collects while recording';
             nativeText('PREF_DETAIL', 'Recording interval: ' + p.sampleMs + ' ms (fixed per trip)');
-            nativeText('PREF_AUTO', 'Automatic ignition recording: ' + (p.automatic ? 'requested, unavailable' : 'off'));
+            nativeText('PREF_AUTO', 'Automatic engine-session recording: ' + recorder.automaticStatus());
             nativeText('PREF_ALTITUDE', 'Elevation noise deadband: ' + p.altitudeThresholdFt + ' ft');
             nativeText('PREF_SMOOTH', 'Display graph smoothing: ' + (p.smoothing ? 'on' : 'off'));
             nativeText('PREF_BANDS', 'New trips: 0-10 mph, then 10 mph bands to 200 mph; 200+ and unknown remain separate. Saved trips retain their recorded bands.');
@@ -271,7 +294,7 @@ mgu.run({
             nativeText('PREF_DEMO', 'Demo data: ' + (demo ? 'on / memory only' : 'off'));
             nativeText('PREF_NOTICE', recorder.error || state.notice || storage.errors.join(' | ') ||
                 (demo ? 'SIMULATED DATA. Demo trips are never recorded or added to real history.' :
-                    'US units / three decimals / 12-hour dates. Ignition events, consumption and speed/RPM calibration remain unavailable.'));
+                    gpsStatus + '. WGS84 degrees/accuracy unverified. RPM sessions are not ignition; stop/start may split trips. App must be running. Fuel/MPG unavailable.'));
         }
         const setting = (name, key, options) => bind(name, () => {
             const value = recorder.settings[key], next = options ? options[(options.indexOf(value) + 1) % options.length] : !value;
@@ -281,7 +304,7 @@ mgu.run({
         });
         setting('PREF_DETAIL', 'sampleMs', [500, 1000, 2000]); setting('PREF_AUTO', 'automatic');
         setting('PREF_ALTITUDE', 'altitudeThresholdFt', [5, 10, 20]); setting('PREF_SMOOTH', 'smoothing');
-        bind('PREF_RETRY', () => { sources.retry(); tell('Retrying vehicle providers'); refreshSettings(); });
+        bind('PREF_RETRY', () => { recorder.retrySources(); tell('Retrying vehicle providers'); refreshSettings(); });
         bind('PREF_BACK', () => ui.open('MAIN'));
         bind('PREF_DEMO', () => {
             if (busy || recorder.active) { tell('Finish the recording before changing demo mode.'); return; }
@@ -296,7 +319,8 @@ mgu.run({
                 tell('Finish the recording before changing demo mode.'); return;
             }
             demo = enabled ? new Demo(recorder.settings) : null;
-            state.saved = null; state.modal = null; state.draft = null;
+            recorder.setAutomaticEnabled(!demo && !ctx.preview);
+            state.saved = null; state.followAutomatic = true; state.modal = null; state.draft = null;
             resetProjection(); route('trip');
             Promise.resolve(refreshHistory()).then(loadProjection).catch((e) => tell(e.message));
             refreshSettings(); changed();
@@ -355,11 +379,21 @@ mgu.run({
         };
         if (ctx.app && ctx.app.on) ctx.app.on('shutdown', close);
         process.once('exit', close);
-        if (demo) await refreshHistory();
+        recorder.setAutomaticEnabled(!demo && !ctx.preview);
+        await refreshHistory();
         await loadProjection();
         loop = ctx.loop('MAIN', 30, async () => {
             if (closed) return;
             syncController();
+            if (pendingSession && !busy && !state.modal && state.page !== 'edit') {
+                const event = pendingSession; pendingSession = null;
+                await refreshHistory();
+                if (state.followAutomatic) {
+                    state.saved = event.type === 'automatic-stop' ? event.trip : null;
+                    resetProjection(); await loadProjection();
+                }
+                tell(event.type === 'automatic-start' ? 'Engine running / recording started' : 'Engine stopped / trip saved');
+            }
             const now = Date.now();
             if (demo) {
                 if (now - lastDraw < 1000 / 30) return;

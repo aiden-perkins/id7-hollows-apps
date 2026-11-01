@@ -21,21 +21,22 @@ class Storage {
         if (fs.existsSync(index)) {
             try {
                 const data = JSON.parse(fs.readFileSync(index, 'utf8'));
-                if (data.schemaVersion !== 1 || !Array.isArray(data.trips)) throw new Error('Unsupported index schema');
+                if (![1, 2].includes(data.schemaVersion) || !Array.isArray(data.trips)) throw new Error('Unsupported index schema');
             } catch (e) { this.indexBlocked = true; this.errors.push('Index preserved: ' + e.message); }
         }
     }
     settings() {
         const defaults = { schemaVersion: 1, units: 'US', precision: 3, dateFormat: 'US12', sampleMs: 1000,
-            automatic: false, altitudeThresholdFt: 10, smoothing: false, speedBands: Array.from({ length: 20 }, (_, i) => 10 + i * 10) };
+            automatic: false, engineSessionHold: false, altitudeThresholdFt: 10, smoothing: false, speedBands: Array.from({ length: 20 }, (_, i) => 10 + i * 10) };
         try {
             const s = JSON.parse(fs.readFileSync(path.join(this.dir, 'settings.json'), 'utf8'));
             if (!s || s.schemaVersion !== 1 || s.units !== 'US' || s.precision !== 3 || s.dateFormat !== 'US12' ||
                 ![500, 1000, 2000].includes(s.sampleMs) || typeof s.automatic !== 'boolean' || typeof s.smoothing !== 'boolean' ||
+                s.engineSessionHold !== undefined && typeof s.engineSessionHold !== 'boolean' ||
                 ![5, 10, 20].includes(s.altitudeThresholdFt) || !Array.isArray(s.speedBands) || (s.speedBands.length < 1 || s.speedBands.length > 64) ||
                 !s.speedBands.every((v, i) => Number.isFinite(v) && v > 1 && v <= 250 && (!i || v > s.speedBands[i - 1]))) throw new Error('Unsupported or invalid settings');
             // Apply the requested bands to future recordings; saved trip policies remain immutable.
-            return Object.assign(defaults, { sampleMs: s.sampleMs, automatic: s.automatic,
+            return Object.assign(defaults, { sampleMs: s.sampleMs, automatic: s.automatic, engineSessionHold: s.engineSessionHold === true,
                 altitudeThresholdFt: s.altitudeThresholdFt, smoothing: s.smoothing });
         } catch (e) {
             if (e.code !== 'ENOENT') { this.settingsBlocked = true; this.errors.push('Settings preserved: ' + e.message); }
@@ -60,10 +61,14 @@ class Storage {
         const file = path.join(dir, 'summary.json');
         if (fs.statSync(file).size > 1024 * 1024) throw new Error('Trip summary exceeds supported size');
         const s = JSON.parse(fs.readFileSync(file, 'utf8'));
-        if (!s || s.schemaVersion !== 1 || s.id !== id || !s.policy || s.policy.calculationVersion !== 1 ||
+        if (!s || ![1, 2].includes(s.schemaVersion) || s.id !== id || !s.policy || ![1, 2].includes(s.policy.calculationVersion) ||
             !s.stats || !Number.isFinite(s.stats.durationMs) || s.stats.durationMs < 0 ||
             !['recording', 'finished', 'interrupted'].includes(s.status) || typeof s.name !== 'string' ||
             !Number.isFinite(s.startedAt) || !Array.isArray(s.gaps)) throw new Error('Invalid or unsupported trip summary; preserved');
+        if (s.policy.calculationVersion === 2 && (!Number.isFinite(s.stats.distanceMs) || s.stats.distanceMs < 0 ||
+            !Number.isFinite(s.stats.movingDistanceMs) || s.stats.movingDistanceMs < 0 ||
+            !['gpsMaxGapMs', 'gpsMaxMph', 'gpsSpeedToleranceMph', 'gpsJumpSlackMeters'].every((k) => Number.isFinite(s.policy[k]) && s.policy[k] > 0) ||
+            !Array.isArray(s.policy.speedBands))) throw new Error('Invalid GPS calculation policy; preserved');
         return s;
     }
     history() {
@@ -78,13 +83,13 @@ class Storage {
         if (this.indexBlocked) return;
         try {
             const trips = this.history().map((s) => ({ id: s.id, name: s.name, startedAt: s.startedAt, status: s.status }));
-            atomic(path.join(this.trips, 'index.json'), { schemaVersion: 1, trips });
+            atomic(path.join(this.trips, 'index.json'), { schemaVersion: 2, trips });
         } catch (e) { this.errors.push('Trip summaries saved; index update failed: ' + e.message); this.errors = this.errors.slice(-10); }
     }
     create(settings) {
         const id = 'trip-' + Date.now().toString(36) + '-' + token();
         fs.mkdirSync(path.join(this.trips, id));
-        const summary = { schemaVersion: 1, id, name: 'Trip ' + new Date().toISOString(), annotation: '',
+        const summary = { schemaVersion: 2, id, name: 'Trip ' + new Date().toISOString(), annotation: '',
             status: 'recording', startedAt: Date.now(), endedAt: null, updatedAt: Date.now(), sequence: 0,
             policy: C.policy(settings), gaps: [], missingWallMs: 0, lastWallAt: null, timelineMs: 0,
             sources: require('./sources').DEFINITIONS, sourceNotes: require('./sources').NOTES };
@@ -118,7 +123,7 @@ class Storage {
             const lines = fs.readFileSync(file, 'utf8').split('\n').filter((line) => line.length);
             for (const line of lines) {
                 const row = JSON.parse(line);
-                if (row.schemaVersion !== 1 || !Number.isFinite(row.recordedMs) || !Number.isFinite(row.elapsedMs) ||
+                if (![1, 2].includes(row.schemaVersion) || !Number.isFinite(row.recordedMs) || !Number.isFinite(row.elapsedMs) ||
                     !Number.isFinite(row.wallAt) || typeof row.segment !== 'string' || !row.values ||
                     !['gps', 'speed', 'rpm', 'gear', 'fuel'].every((k) => row.values[k] && typeof row.values[k].state === 'string') ||
                     row.recordedMs < 0 || previous && row.recordedMs < previous.recordedMs) throw new Error('Invalid sample timeline; original preserved');
@@ -130,16 +135,19 @@ class Storage {
     async recover(id) {
         const summary = this.read(id);
         if (summary.status === 'finished') throw new Error('Finished trips cannot be recovered');
-        const stats = C.create(summary.policy); let last = null;
-        await this.samples(id, (row) => { C.accept(stats, last, row, summary.policy); last = row; });
-        summary.stats = stats; summary.status = 'interrupted';
+        const resumable = summary.policy.calculationVersion === 2, stats = resumable ? C.create(summary.policy) : null;
+        let last = null;
+        await this.samples(id, (row) => { if (resumable) C.accept(stats, last, row, summary.policy); last = row; });
+        // Legacy saved totals and speed-derived provenance stay untouched, even when closing after interruption.
+        if (resumable) summary.stats = stats;
+        summary.status = 'interrupted';
         if (last) {
             summary.lastWallAt = last.wallAt; summary.timelineMs = last.elapsedMs;
             summary.missingWallMs = Math.max(0, last.elapsedMs - last.recordedMs);
         }
         const names = this.chunkNames(id);
         summary.sequence = names.length ? Number(names[names.length - 1].slice(8, 17)) : 0;
-        return { summary, last };
+        return { summary, last, resumable };
     }
     edit(id, name, annotation) {
         const summary = this.read(id);
