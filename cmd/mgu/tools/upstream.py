@@ -98,6 +98,26 @@ def build(args):
         app = apps / args.app
         app.parent.mkdir(parents=True)
         shutil.copytree(source, app)
+        if local and args.app == 'data_logger':
+            # Package the same readers and definitions, not an independently maintained fork.
+            viewer = args.root / 'apps' / 'live_data_viewer'
+            for name in ('definitions.js', 'model.js', 'services.js', 'diagnostic.js', 'storage.js'):
+                shutil.copy2(viewer / name, app / name)
+            trip = args.root / 'apps' / 'trip_data'
+            (app / 'trip_data').mkdir()
+            for name in ('sources.js', 'calculations.js', 'storage.js'):
+                shutil.copy2(trip / name, app / 'trip_data' / name)
+            viewer_spec = json.loads((viewer / 'app.json').read_text(encoding='utf-8'))
+            spec['signals'] = viewer_spec['signals']
+            trip_spec = json.loads((trip / 'app.json').read_text(encoding='utf-8'))
+            for interface, permissions in trip_spec['signals'].items():
+                target = spec['signals'].setdefault(interface, {})
+                for member, access in permissions.items():
+                    if member.startswith('_'):
+                        target.setdefault(member, access)
+                    else:
+                        target[member] = ''.join(dict.fromkeys(target.get(member, '') + access))
+            (app / 'app.json').write_text(json.dumps(spec, indent=2) + '\n', encoding='utf-8')
         if local and args.app == 'live_data_viewer':
             shutil.copy2(args.upstream / 'apps' / 'car_vitals' / 'demo.js', app / 'vitals_demo.js')
         if not local:

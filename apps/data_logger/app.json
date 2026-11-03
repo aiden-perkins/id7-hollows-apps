@@ -1,0 +1,123 @@
+{
+  "id": "data_logger",
+  "title": "Data Logger",
+  "description": "Record all Live Data Viewer and Trip Recorder data, combine saved sessions, and download to your phone",
+  "version": "1.1.0",
+  "vendor": "custom",
+  "loggingId": "OA9K",
+  "iconGlyph": "LOG",
+  "signals": {
+    "de.bmw.infotainment.vehicle.CDS": {
+      "statusEngineTemperature": "rs",
+      "statusEngineSpeed2": "rs"
+    },
+    "de.bmw.infotainment.vehicle.Vehicle": {
+      "statusNewCurrentUnitsStatusExt": "rs"
+    },
+    "de.bmw.infotainment.vehicle.Vehicle2": {
+      "statusCarSpeed2": "rs",
+      "statusStandstillFunctions": "rs"
+    },
+    "de.bmw.infotainment.drivingexcitement.FES": {
+      "statusFESVehicleDynamicSwitchHMI": "rs",
+      "statusDSCSwitchHMI": "rs",
+      "statusActualValueTorque2": "rs",
+      "statusSwitchDriveDynamicSport2": "rs"
+    },
+    "de.bmw.infrastructure.analytics.BasicDataSet": {
+      "basicDataSet": "s"
+    },
+    "de.bmw.infrastructure.EnvironmentalInformation": {
+      "ExteriorTemperature": "s"
+    },
+    "de.bmw.infotainment.vehicle.CDS2": {
+      "statusLongitudinalAccelerationMassCenter": "rs",
+      "statusLateralAccelerationMassCenter": "rs"
+    },
+    "de.bmw.infotainment.navigation.positioning.Positioning": {
+      "_instances": "Main_Instance",
+      "rawPositionData": "rs"
+    },
+    "de.bmw.infotainment.drivingexcitement.XView": {
+      "statusSteeringAngleDriver": "rs"
+    },
+    "de.bmw.infotainment.vehicle.TPMS": {
+      "statusTyrePressure": "rs",
+      "statusTyreTemperature": "rs",
+      "statusTargetTyrePressure": "rs"
+    },
+    "de.bmw.infotainment.vehicle.TPMSInternalData": {
+      "tpmsInternalLastValues": "rs"
+    },
+    "com.harman.infotainment.systemfunctions.tasu.tasu.InternalTasu": {
+      "_instances": "SystemFunctionsInternalTasuInst1",
+      "_methods": [
+        "sendTasuRequest"
+      ],
+      "_broadcasts": [
+        "sendTasuResponse"
+      ]
+    },
+    "de.bmw.infrastructure.VehicleInformation": {
+      "DataPowerTrain2": "s",
+      "statusGearboxDrive": "s"
+    },
+    "de.bmw.infotainment.controlelements.FrontCCU": {
+      "statusRotaryEncoderState": "rs"
+    }
+  },
+  "screens": [
+    {
+      "name": "MAIN",
+      "kind": "list",
+      "title": "Data Logger",
+      "items": [
+        [
+          "button",
+          "RECORD",
+          "Start recording"
+        ],
+        [
+          "text3",
+          "STATUS",
+          "Stopped — saved sessions stay on the car"
+        ],
+        [
+          "text3",
+          "COUNTS",
+          "No current session"
+        ],
+        [
+          "button",
+          "COMBINE",
+          "Combine all saved data"
+        ],
+        [
+          "text3",
+          "EXPORT",
+          "No combined file yet"
+        ],
+        [
+          "button",
+          "SHARE",
+          "Enable phone download"
+        ],
+        [
+          "text3",
+          "LINK",
+          "Phone download is off"
+        ],
+        [
+          "text3",
+          "NOTICE",
+          ""
+        ],
+        [
+          "text3",
+          "HELP",
+          "Records all Live Data Viewer and Trip Recorder measurement paths together while this app is running, including in the background. Includes raw inputs, GPS/elevation, speed/RPM, gearbox/selector, availability and per-session trip calculations. Fuel/MPG remain unavailable where Trip Recorder has no validated source. Existing Trip Recorder history is not imported. Stop before switching the car off. Combine creates one JSON Lines (.jsonl) file from every saved logger session; each line is a JSON record. Connect the car to your phone hotspot, enable download, and open the displayed link on your phone. Download is local, unencrypted and token-protected: keep the link private and turn sharing off afterwards. Hotspot routing or a car firewall may prevent access. GPS and other private vehicle data may be included. Logging stops at 256 MiB; saved data is never automatically deleted."
+        ]
+      ]
+    }
+  ]
+}
