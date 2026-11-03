@@ -32,8 +32,8 @@ mgu.run({
         function collect(force) {
             if (!services) return;
             const ids = shown() ? pageDefs(state.page).map((d) => d.id) : [];
-            const key = ids.join(',');
-            if (force || key !== activeKey) { activeKey = key; services.activate(ids, force); }
+            const key = state.page + ':' + ids.join(',');
+            if (force || key !== activeKey) { activeKey = key; services.activate(ids, force, state.page); }
         }
         async function setExhaust(mode) {
             if (closed || !shown()) return;

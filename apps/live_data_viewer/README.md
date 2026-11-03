@@ -6,14 +6,25 @@ The app uses the upstream 1600 x 520 canvas / theme / frame / display loop, foll
 the updated Trip Data dashboard. Settings is the only native screen. The design
 below records the current presentation and the remaining research requirements.
 
-- Three primary dashboards, in the default order **Driving, Temperatures, Engine
-  health**. Existing saved category ordering is preserved.
+- Four primary dashboards, in the default order **Driving, Dynamics,
+  Temperatures, Engine health**. Existing saved category ordering is preserved.
 - Driving prioritizes three large boost/power/torque dials with current fills,
   held min/max markers and inner observed-range arcs. A compact coupe/TPMS area
   has larger wheels relative to its body; pedals and steering remain graphical.
   Speed/RPM, gear/mode/traction, G-meter and electrical instruments are retained.
   Separate total/left/right fuel fields now sit on Driving, not Engine health.
   There is no altitude graph on Driving.
+- Dynamics has its own focused acquisition profile (1.7.4), independent of
+  Driving and the general Refresh setting. Front/rear steering, brake pressure,
+  accelerator, kickdown, all four wheel speeds and front/rear anti-roll actual
+  motor torque target 100 ms start-to-start diagnostic reads. Brake pressure is
+  not pedal travel or a percentage. Each axle repeats its actual motor torque
+  to the left and right of the central power column (four Nm readouts total).
+  Motor angle, actuator torque, requested motor torque and controller-status
+  diagnostics are not collected for this panel.
+  G-force and power inputs accept native notifications immediately, with
+  100 ms getter fallback where supported. xDrive torque distribution remains
+  notification-only: no unsupported BasicDataSet getter or inferred split.
 - Temperatures keeps its four grouped rolling plots: engine oil/coolant, the
   distinct transmission leads/converter, air locations and wheel temperatures.
   Observation min/max brackets and hollow rolling-window extrema markers augment
@@ -38,12 +49,25 @@ below records the current presentation and the remaining research requirements.
 - Wheel-specific Driving readings use reported FL/FR/RL/RR field identities.
   Tire temperatures also appear in Temperatures using the same shared readings.
 - Both upstream transmission-temperature leads remain identifiable:
-  BasicDataSet transmission oil and EGS ECU 0x18 / DID 0xDA12. The latter is
-  explicitly unavailable; this app issues no diagnostic requests.
-- Source collection follows the visible category.
-  Getters have bounded deadlines, no overlapping reads per field, and a
-  five-second failure backoff. TPMS polling has a five-second minimum.
-  Leaving data pages closes their proxies. Reconnects preserve graph gaps.
+  BasicDataSet transmission oil and EGS ECU 0x18 / DID 0xDA12. These are not
+  part of focused Dynamics polling.
+- Collection follows the visible, focused category. Settings, display sheets
+  and focus loss pause acquisition; other dashboards do not collect Dynamics
+  diagnostics in the background. Profile changes apply even with identical IDs.
+  Focused diagnostic reads have no post-response success cooldown. Same-ECU
+  UDS 22 reads can batch up to eight DIDs after valid single replies establish
+  their complete payload lengths; minimum decoder lengths are not boundaries.
+  Malformed, rejected or timed-out batches disable batching for that ECU for
+  the session and retry singles. Individual unsupported DIDs retain backoff.
+  One diagnostic operation stays outstanding until its native send settles;
+  focused requests have a one-second hard deadline and a 100 ms busy retry pause.
+  Native getters never overlap per field; newer notifications supersede older
+  getter results. Failures have a five-second backoff.
+  Dynamics parking-brake getters run at one second; TPMS and unit metadata
+  have a five-second minimum. Their notifications still arrive immediately.
+  Leaving data pages closes native signal proxies; reconnects preserve gaps.
+  Ten hertz is a target, not a vehicle guarantee: ECU latency, batching support,
+  shared TASU traffic and native provider notification rates remain constraints.
 - Waiting, live, stale, invalid, unavailable and error are separate states.
   Retained last-valid values are labeled; no missing value becomes zero.
   Catalog defaults and observed TPMS codes 65534/65533 are rejected.
@@ -68,11 +92,14 @@ below records the current presentation and the remaining research requirements.
   Sport Plus with the original reported name beneath it.
 - Dashboard numbers use instrument-appropriate rounding (e.g. whole speed/RPM,
   one-decimal tire pressure, two-decimal voltage/G). US units remain unchanged.
-  Refresh (500/1000/2000 ms), graph duration (60/180/600 seconds) and category
-  ordering are persisted.
+  General Refresh (100/250/500/1000/2000 ms), graph duration (60/180/600 seconds)
+  and category ordering are persisted. General Refresh does not throttle the
+  focused Dynamics fast profile.
 - Trend buffers retain at most 1,201 points and ten minutes per numeric reading,
   with gaps for invalid data, service errors and collection pauses. Extrema
   cover valid observed samples only.
+  The Dynamics G-force trail keeps 100 ms history points rather than the normal
+  500 ms history interval; its current indicator follows each valid delivery.
 - The catalog's infotainment power modes do not establish ignition on/off.
   Extrema therefore cover the **observation session**, starting when the app
   starts, and are not reused after app restart. There is no manual reset action.

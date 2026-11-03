@@ -277,20 +277,20 @@ add('exhaust', 'Exhaust electrical output (both DMEs)', 'driving', 'Exhaust', { 
     const prefix = 'sway' + axle, variant = axle === 'Front' ? 'EMARS_V1' : 'EMARS_H1';
     const provenance = 'ISTA ' + variant + '; retained non-synthetic ' + (axle === 'Front' ? '25' : '04') +
         '-D699/D69A/D69B/D6BB replies and matching F150 identity in other-data-evidence-1793411802398.json. ';
-    diagnostic(prefix + 'Torque', axle + ' anti-roll actuator torque', 'dynamics', 'Active anti-roll', target, 0xD699, 0, 2, {
+    diagnostic(prefix + 'Torque', axle + ' anti-roll actuator torque', 'sources', 'Active anti-roll', target, 0xD699, 0, 2, {
         unit: 'Nm', scale: 1 / 26, diag: { signed: true, exactBytes: 6 }, pollMs: 1000,
         notes: provenance + 'RES_0XD699 STAT_MOMENT_AKTUATOR_IST_WERT: signed BE16 / 26 Nm, reported actual actuator torque. No source-defined qualifier/sentinel in this row. Not motor torque, engagement percentage or D6BB contradictory unsigned stabilizer torque.' });
     diagnostic(prefix + 'Current', axle + ' anti-roll motor RMS current', 'sources', 'Active anti-roll', target, 0xD69B, 0, 2, {
         unit: 'A', scale: 1 / 150, diag: { signed: true, exactBytes: 6 }, pollMs: 1000,
         notes: provenance + 'RES_0XD69B STAT_PHASENSTROM_RMS_WERT: signed BE16 / 150 A. Effective motor phase current, not battery current or engagement percentage. No qualifier/sentinel specified; zero alone does not mean anti-roll off.' });
     [['MotorTarget', 'requested motor torque', 0], ['MotorActual', 'actual motor torque', 2]].forEach(([suffix, label, at]) =>
-        diagnostic(prefix + suffix, axle + ' anti-roll ' + label, 'dynamics', 'Active anti-roll', target, 0xD69A, at, 2, {
+        diagnostic(prefix + suffix, axle + ' anti-roll ' + label, suffix === 'MotorActual' ? 'dynamics' : 'sources', 'Active anti-roll', target, 0xD69A, at, 2, {
             unit: 'Nm', scale: 1 / 3276, diag: { signed: true, exactBytes: 4 }, pollMs: 1000,
             notes: provenance + 'RES_0XD69A: signed BE16 / 3276 Nm, requested/actual electric motor torque from the same reply. Not D699 actuator torque or D6BB stabilizer torque; no guessed gear-ratio conversion.' }));
-    diagnostic(prefix + 'Status', axle + ' anti-roll controller status', 'dynamics', 'Active anti-roll', target, 0xD6BB, 10, 1, {
+    diagnostic(prefix + 'Status', axle + ' anti-roll controller status', 'sources', 'Active anti-roll', target, 0xD6BB, 10, 1, {
         decoder: 'swayStatus', numeric: false, diag: { exactBytes: 34 }, pollMs: 1000,
         notes: provenance + 'RES_0XD6BB STAT_ST_FN_XA_ARS / TAB_EARSAR_ST_FN_XAX_ARS at byte 10. Ready, active, degraded and null-position fallback are distinct; unfilled/reserved codes are unavailable. This is not a binary on/off or percentage.' });
-    diagnostic(prefix + 'MotorAngle', axle + ' anti-roll motor angle', 'dynamics', 'Active anti-roll', target, 0xD6BB, 21, 4, {
+    diagnostic(prefix + 'MotorAngle', axle + ' anti-roll motor angle', 'sources', 'Active anti-roll', target, 0xD6BB, 21, 4, {
         unit: 'rad', diag: { format: 'float32', exactBytes: 34, validAt: 25, validValues: [2] }, pollMs: 1000,
         notes: provenance + 'RES_0XD6BB STAT_IST_WNKL_ABS_EMOT_ARS_WERT: BE IEEE754 motor angle with multiturn accumulation, rad; own qualifier byte25 must equal 2 (IO), not 6 (NIO) or 255 (communication error). Not wheel angle or sway-bar twist; no guessed gear-ratio conversion.' });
 });

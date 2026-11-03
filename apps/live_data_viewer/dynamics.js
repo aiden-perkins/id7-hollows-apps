@@ -2,17 +2,10 @@
 const { C, text, get, numeric, fmt } = require('./instruments');
 
 // Fixed display references only, not measured mechanical limits.
-const ANGLE_FULL_SCALE_RAD = Math.PI;
-const ACTUATOR_TORQUE_FULL_SCALE_NM = 1000;
+const MOTOR_TORQUE_FULL_SCALE_NM = 10;
 const WHEEL_OFFSET = 260, WHEEL_HALF_WIDTH = 42, WHEEL_HALF_HEIGHT = 68;
 const POWER_BOX_HALF_WIDTH = 58;
 const G_TRAIL_MS = 10000;
-const fields = [
-    { suffix: 'MotorAngle', unit: 'rad', places: 1 },
-    { suffix: 'Torque', unit: 'Nm', places: 1 },
-    { suffix: 'MotorTarget', unit: 'Nm', places: 2 },
-    { suffix: 'MotorActual', unit: 'Nm', places: 2 },
-];
 const wheelFields = [
     { prefix: 'pressure', unit: 'psi', label: 'PSI', places: 0 },
     { prefix: 'tyreTemp', unit: 'F', label: 'F', places: 0 },
@@ -131,41 +124,23 @@ function progress(cv, t, cx, y, end, value, side, fullScale) {
     if (fill > 0) cv.line(cx, y, cx + (end - cx) * fill, y, 10, C.cyan);
 }
 function axle(cv, t, vm, name, cx, cy) {
-    const prefix = 'sway' + name;
-    const angle = physical(vm, prefix + 'MotorAngle', 'rad');
-    const actuatorTorque = physical(vm, prefix + 'Torque', 'Nm');
+    const motorTorque = physical(vm, 'sway' + name + 'MotorActual', 'Nm');
     const roadAngle = physical(vm, name === 'Front' ? 'frontAxle' : 'rearAxle', 'deg');
     const rotation = -(roadAngle === null ? 0 : roadAngle) * (name === 'Front' ? 2 : 10) * Math.PI / 180;
     const cosine = Math.cos(rotation), sine = Math.sin(rotation);
+    const shown = fmt(motorTorque, 2) + ' Nm', options = { align: 'center', font: 'num' }, width = 104;
+    const size = Math.min(21, 21 * width / Math.max(1, cv.textWidth(shown, 21, options)));
     [-1, 1].forEach((side) => {
         const start = cx + side * POWER_BOX_HALF_WIDTH;
         const wheelX = cx + side * WHEEL_OFFSET;
         // The wheel masks the bar ends at every steering angle.
-        progress(cv, t, start, cy - 9, wheelX, angle, side, ANGLE_FULL_SCALE_RAD);
-        progress(cv, t, start, cy + 9, wheelX, actuatorTorque, side, ACTUATOR_TORQUE_FULL_SCALE_NM);
+        progress(cv, t, start, cy, wheelX, motorTorque, side, MOTOR_TORQUE_FULL_SCALE_NM);
         wheel(cv, t, wheelX, cy, roadAngle, cosine, sine);
         const wheelId = (name === 'Front' ? 'F' : 'R') + (side < 0 ? 'LH' : 'RH');
         wheelData(cv, t, vm, wheelId, cx + side * (WHEEL_OFFSET + 150), cy);
-    });
-    cv.line(cx, cy - 20, cx, cy + 20, 2, t.tick);
-    fields.forEach((field, index) => {
-        const raw = field.suffix === 'MotorAngle' ? angle :
-            field.suffix === 'Torque' ? actuatorTorque : physical(vm, prefix + field.suffix, field.unit);
-        const value = raw === null ? null : field.unit === 'rad' ? raw * 180 / Math.PI : raw;
-        const unitSuffix = field.unit === 'rad' ? '°' : ' ' + field.unit;
-        const row = cy + (index < 2 ? -25 : 43);
-        [-1, 1].forEach((side) => {
-            const start = cx + side * POWER_BOX_HALF_WIDTH, end = cx + side * (WHEEL_OFFSET - WHEEL_HALF_WIDTH);
-            const left = Math.min(start, end) + 8, right = Math.max(start, end) - 8;
-            const columnWidth = (right - left) / 2, width = columnWidth - 8;
-            const x = left + columnWidth * (index % 2 + 0.5);
-            // Split each original signed sample independently; missing/held is unknown, never zero.
-            const magnitude = value === null ? null : Math.max(0, value * side);
-            const shown = (magnitude === 0 ? '0' : fmt(magnitude, field.places)) + unitSuffix;
-            const options = { align: 'center', font: 'num' };
-            const size = Math.min(21, 21 * width / Math.max(1, cv.textWidth(shown, 21, options)));
-            text(cv, shown, x, row, width, size, magnitude === null || magnitude === 0 ? t.dim : C.cyan, options);
-        });
+        // Repeat the actual axle measurement beside each half-bar, clear of the power column.
+        text(cv, shown, start + side * (12 + width / 2), cy + 47, width, size,
+            motorTorque === null ? t.dim : C.cyan, options);
     });
 }
 function powerBox(cv, t, vm, id, cx, cy) {

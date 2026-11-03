@@ -85,7 +85,8 @@ class Model {
         r.min = r.min === null ? value : Math.min(r.min, value);
         r.max = r.max === null ? value : Math.max(r.max, value);
         let point = r.history[r.history.length - 1];
-        if (r.breakNext || !point || now - point.at >= 500) { point = { at: now, value }; r.history.push(point); }
+        const sampleMs = d.id === 'gForce' ? 100 : 500;
+        if (r.breakNext || !point || now - point.at >= sampleMs) { point = { at: now, value }; r.history.push(point); }
         else point.value = value;
         if (d.id === 'gForce') { point.lateral = r.decoded.lateral; point.longitudinal = r.decoded.longitudinal; }
         r.breakNext = false; this.prune(r);
