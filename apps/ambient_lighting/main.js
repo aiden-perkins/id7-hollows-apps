@@ -2,64 +2,93 @@
 const mgu = require('./kit/mgu');
 const { MODES, COLORS, colorLabel } = require('./catalog');
 const { Lighting } = require('./lighting');
+const { listSheet, TOP } = require('./kit/sheet');
+const V = require('./view');
 
 mgu.run({
     async start(ctx) {
-        const ui = ctx.ui, cache = {};
-        let selected = MODES[0], closed = false;
-        const text = (name, value, row, cell) => {
-            const key = name + ':' + (row || 0) + ':' + (cell || 'Text');
-            if (cache[key] === value) return;
-            cache[key] = value;
-            Promise.resolve(ui.text(name, value, row, cell)).catch((error) => ctx.log.warn(error));
+        const ui = ctx.ui;
+        let closed = false, dirty = true, loop = null, targets = [], enableLabel = '';
+        const changed = () => { if (closed) return; dirty = true; if (loop) loop.kick(); };
+        const lighting = new Lighting(ctx, changed);
+        const report = (error) => {
+            lighting.notice = error.message; ctx.log.warn(error); changed();
         };
-        const lighting = new Lighting(ctx, render);
-        function render() {
-            if (closed) return;
-            text('ENABLE', lighting.enabled ? 'Disable driving-mode lighting' : 'Enable driving-mode lighting');
-            text('CURRENT', 'Current mode: ' + (lighting.mode ? lighting.mode.label : 'Waiting for vehicle') +
-                ' | Vehicle color: ' + (lighting.color === null ? 'Unknown / custom / off' : colorLabel(lighting.color)));
-            text('STATUS', lighting.status());
-            MODES.forEach((mode, row) => {
-                text('MODE_LIST', mode.label, row, 'Text1stCol');
-                text('MODE_LIST', colorLabel(lighting.mappings[mode.name]), row, 'Text2ndCol');
-            });
-            text('COLOR_TITLE', selected.label + ' - ambient color' + (lighting.notice ? '\n' + lighting.notice : ''));
-            const assigned = lighting.mappings[selected.name];
-            text('COLOR_LIST', (assigned === undefined ? '[Selected] ' : '') + 'Leave unchanged', 0);
-            text('USE_CURRENT', 'Assign current vehicle color' + (lighting.color === null ? ' (unavailable)' : ' (' + colorLabel(lighting.color) + ')'));
-            COLORS.forEach((color, index) => text('COLOR_LIST',
-                (assigned === color.value ? '[Selected] ' : '') + color.label, index + 1));
+        const options = [[0, 'Leave unchanged'], ['current', 'Assign current vehicle color']]
+            .concat(COLORS.map((color) => [color.value, color.label]));
+        // Use the upstream drawn settings picker without moving the saved mode-colors.json data.
+        const choices = {
+            schema: MODES.map((mode) => ({ key: mode.name, label: mode.label, type: 'choice', options })),
+            get: (key) => lighting.mappings[key] === undefined ? 0 : lighting.mappings[key],
+            display: (key) => colorLabel(lighting.mappings[key]),
+            set(key, value) {
+                if (value === 'current') {
+                    if (lighting.color === null) throw new Error('Current vehicle color is unavailable; choose a factory slot instead.');
+                    value = lighting.color;
+                }
+                lighting.assign(key, value === 0 ? undefined : value);
+            }
+        };
+        const picker = listSheet(choices, 'Driving-mode colors');
+        const choose = picker.choose, draw = picker.draw;
+        picker.choose = function() {
+            try { return choose.call(this); }
+            catch (error) { report(error); return null; }
+        };
+        picker.draw = function(cv, theme) {
+            options[1][1] = 'Assign current vehicle color (' +
+                (lighting.color === null ? 'unavailable' : colorLabel(lighting.color)) + ')';
+            const hits = draw.call(this, cv, theme);
+            if (!this.open) cv.text('Driving-mode colors', 44, TOP + 40, 32, theme.text, { font: 'bold' });
+            const help = this.open ? 'Factory color slots; brightness, on/off and dynamic lighting are unchanged.' :
+                'Choose a mode. Unassigned modes leave the vehicle lighting unchanged.';
+            V.text(cv, lighting.notice || help, 44, TOP + 66, 1512, 17, lighting.notice ? theme.warn : theme.dim);
+            return hits;
+        };
+        picker.onClose = changed;
+        function openPicker(mode) {
+            picker.open = null;
+            if (mode) {
+                picker.focus = MODES.indexOf(mode);
+                picker.choose();
+            }
+            if (!ctx.display.openSheet(picker)) {
+                report(new Error('Full-screen color controls require the GPU renderer and Full screen layout.'));
+            }
         }
-        const bind = (name, action) => ui.onClick(name, async (event) => {
-            try { await action(event || {}); }
-            catch (error) { lighting.notice = error.message; ctx.log.warn(error); }
-            render();
+        ui.onClick('BTN_MODES', () => { if (!closed) openPicker(); });
+        ui.onClick('BTN_ENABLE', () => {
+            if (closed) return;
+            try { lighting.enable(!lighting.enabled); }
+            catch (error) { report(error); }
         });
-        await ui.rows('MODE_LIST', MODES.length);
-        await ui.rows('COLOR_LIST', COLORS.length + 1);
-        bind('MODE_LIST', async (event) => {
-            if (!Number.isInteger(event.row) || !MODES[event.row]) return;
-            selected = MODES[event.row]; render();
-            await ui.open('COLORS');
+        ctx.onTap((x, y) => {
+            if (closed || !ui.isVisible('MAIN') || ctx.display.sheet) return;
+            const target = targets.find((q) => x >= q.x && x < q.x + q.w && y >= q.y && y < q.y + q.h);
+            if (target) openPicker(target.mode);
         });
-        bind('COLOR_LIST', async (event) => {
-            if (!Number.isInteger(event.row) || event.row < 0 || event.row > COLORS.length) return;
-            lighting.assign(selected.name, event.row ? COLORS[event.row - 1].value : undefined);
-            await ui.open('MAIN');
-        });
-        bind('ENABLE', () => lighting.enable(!lighting.enabled));
-        bind('COLORS_BACK', () => ui.open('MAIN'));
-        ui.onVisible((name, visible) => { if (visible) render(); });
-        bind('USE_CURRENT', async () => {
-            if (lighting.color === null) throw new Error('Choose a factory color in BMW lighting settings first; wait for its reported color number');
-            lighting.assign(selected.name, lighting.color);
-            await ui.open('MAIN');
-        });
-        const close = () => { if (closed) return; closed = true; lighting.close(); };
+        ui.onVisible(changed);
+        if (ui.onFocus) ui.onFocus(changed);
+        ctx.onLayout(changed);
+        const close = () => {
+            if (closed) return;
+            closed = true;
+            if (loop) loop.stop();
+            ctx.display.closeSheet();
+            lighting.close();
+        };
         if (ctx.app && ctx.app.on) ctx.app.on('shutdown', close);
         process.once('exit', close);
-        render();
+        loop = ctx.loop('MAIN', 30, async () => {
+            if (closed || !dirty) return;
+            dirty = false;
+            const label = lighting.enabled ? 'Disable following' : 'Enable following';
+            if (label !== enableLabel) { await ui.text('BTN_ENABLE', label); enableLabel = label; }
+            const frame = V.draw(ctx, lighting);
+            targets = frame.targets;
+            await ui.image('MAIN_GFX', frame.canvas);
+        });
+        changed();
         await lighting.start();
     }
 });
