@@ -117,7 +117,7 @@ function chart(cv, t, vm, box, metricName, axis, controls) {
             }
         }
     }
-    label(cv, xkey === 'distance' ? (vm.trip && vm.trip.policy.calculationVersion === 1 ? 'Observed speed-integrated distance / mi' : 'Observed GPS distance / mi') :
+    label(cv, xkey === 'distance' ? (vm.trip && vm.trip.policy.calculationVersion === 2 ? 'Observed GPS distance / mi' : 'Observed speed-integrated distance / mi') :
         box.compact ? 'Time / min' : 'Elapsed timeline / min', box.x + box.w / 2, box.y + box.h - 7, box.w - 40, 14, t.dim, { align: 'center' });
 }
 function trip(cv, t, vm) {
@@ -127,7 +127,7 @@ function trip(cv, t, vm) {
     const distanceMs = V.distanceCoverage(s), movingMs = V.movingDistanceCoverage(s);
     const averageSpeed = a && distanceMs ? amount(a.distanceMiles * 3600000 / distanceMs) : '--';
     const movingSpeed = a && movingMs ? amount(a.movingMiles * 3600000 / movingMs) : '--';
-    const averageSource = s && s.policy.calculationVersion === 1 ? 'SPEED-COVERED AVG' : 'GPS-COVERED AVG';
+    const averageSource = s && s.policy.calculationVersion === 2 ? 'GPS-COVERED AVG' : 'SPEED-COVERED AVG';
     const top = vm.contentTop, h = vm.contentBottom - top, half = (h - 12) / 2;
     panel(cv, t, 24, top, 420, h, vm.saved ? averageSource : vm.demo ? 'DEMO VEHICLE' : 'LIVE VEHICLE');
     label(cv, vm.saved ? averageSpeed : amount(live && live.speed.state === 'live' ? live.speed.value : null), 42, top + 105, 285, 73, blue, { font: 'num' });
@@ -151,7 +151,7 @@ function trip(cv, t, vm) {
         (a ? V.coverage(a.speedMs, a.durationMs) : '--') + ' / fuel ' +
         (a ? V.coverage(a.fuelMs, a.durationMs) : '--'), 42, top + h - 15, 382, 12, t.dim);
     chart(cv, t, vm, { x: 460, y: top, w: 1116, h: half, compact: true,
-        summary: (s && s.policy.calculationVersion === 1 ? 'Speed' : 'GPS') + '-covered avg ' + averageSpeed +
+        summary: (s && s.policy.calculationVersion === 2 ? 'GPS' : 'Speed') + '-covered avg ' + averageSpeed +
             ' mph / Moving-covered ' + movingSpeed + ' mph' }, 'speed', 'time', false);
     chart(cv, t, vm, { x: 460, y: top + half + 12, w: 550, h: half, compact: true,
         summary: 'Avg ' + economy }, 'mpg', 'time', false);
@@ -218,7 +218,7 @@ function fuel(cv, t, vm) {
             b && b.matchedMs && b.matchedGallons > 0 ? amount(b.matchedMiles / b.matchedGallons) :
                 b && b.matchedMs ? (b.matchedMiles > 0 ? 'Coast' : 'N/A') : '--'];
     });
-    const distanceLabel = s && s.policy.calculationVersion === 1 ? 'Speed %' : 'Dist %';
+    const distanceLabel = s && s.policy.calculationVersion === 2 ? 'Dist %' : 'Speed %';
     const columns = vm.tableCoverage ? [['mph', 0.2], ['Time s', 0.2], [distanceLabel, 0.2], ['Fuel %', 0.2], ['Match %', 0.2]] :
         [['mph', 0.2], ['Time s', 0.2], ['Miles', 0.2], ['US gal', 0.2], ['MPG', 0.2]];
     table(cv, t, columns, rows, 1092, top + 32, 476, (h - 90) / 8, 16);
@@ -240,7 +240,7 @@ function gears(cv, t, vm) {
                 b && b.matchedMs ? (b.matchedMiles > 0 ? 'Coasting' : 'Undefined') : '--',
             b && b.durationMs ? amount(b.distanceMs / b.durationMs * 100) + '%' : '--'];
     });
-    const distanceLabel = vm.trip && vm.trip.policy.calculationVersion === 1 ? 'Speed %' : 'Dist %';
+    const distanceLabel = vm.trip && vm.trip.policy.calculationVersion === 2 ? 'Dist %' : 'Speed %';
     const columns = vm.tableCoverage ? [['Gear', 0.1], ['Time / s', 0.2], [distanceLabel, 0.18], ['Fuel %', 0.18], ['Matched %', 0.2], ['Shifts', 0.14]] :
         [['Gear', 0.08], ['Time / s', 0.18], ['Miles', 0.15], ['Shifts', 0.09], ['US gal', 0.15], ['US MPG', 0.15], [distanceLabel, 0.2]];
     table(cv, t, columns, rows, 34, top + 8, 1088, (h - 76) / 10, 17);

@@ -7,7 +7,12 @@ function create(policy) {
         rpm: { min: null, max: null, rpmMs: 0, coverageMs: 0 },
         altitude: { start: null, end: null, min: null, max: null, ascent: 0, descent: 0, coverageMs: 0, anchor: null, verticalFpm: null },
         gears: { unknown: bucket() }, bands: policy.speedBands.map(() => bucket()).concat([bucket(), bucket()]) };
-    if (policy.calculationVersion === 2) { stats.distanceMs = 0; stats.movingDistanceMs = 0; }
+    if (policy.calculationVersion >= 2) { stats.distanceMs = 0; stats.movingDistanceMs = 0; }
+    if (policy.calculationVersion === 4) {
+        stats.odometer = { start: null, end: null, startSource: null, endSource: null, unit: 'mi' };
+        stats.tank = { start: null, end: null, startSource: null, endSource: null, unit: 'US gal' };
+        stats.economyWindow = [];
+    }
     return stats;
 }
 const live = (v) => v && v.state === 'live' && Number.isFinite(v.value);
@@ -163,9 +168,18 @@ function gpsDistance(stats, previous, row, policy, part, continuous) {
     }
     return intervals;
 }
-function acceptGPS(stats, previous, row, policy) {
+function acceptContext(stats, values) {
+    ['odometer', 'tank'].forEach((key) => {
+        const sample = values[key], context = stats[key];
+        if (!live(sample) || sample.value < 0) return;
+        if (context.start === null) { context.start = sample.value; context.startSource = sample.source || null; }
+        context.end = sample.value; context.endSource = sample.source || null;
+    });
+}
+function acceptCurrent(stats, previous, row, policy) {
     const values = row.values, old = previous && previous.values;
     stats.samples++; stats.durationMs = row.recordedMs;
+    if (policy.calculationVersion === 4) acceptContext(stats, values);
     const altitude = values.gps.state === 'live' && Number.isFinite(values.gps.altitudeFt) ? values.gps.altitudeFt : null;
     if (altitude !== null) {
         const a = stats.altitude; if (a.start === null) a.start = altitude;
@@ -178,8 +192,9 @@ function acceptGPS(stats, previous, row, policy) {
     stats.altitude.verticalFpm = null;
     if (!continuous) {
         stats.altitude.anchor = altitude;
+        if (policy.calculationVersion === 4) stats.economyWindow = [];
         if (dt > 0) { stats.gears.unknown.durationMs += dt; stats.bands[stats.bands.length - 1].durationMs += dt; }
-        gpsDistance(stats, previous, row, policy, null, false);
+        if (policy.calculationVersion === 2) gpsDistance(stats, previous, row, policy, null, false);
         return { distance: null, fuel: null, dt, continuous: false, distanceMs: 0, distanceStartMs: null, distanceEndMs: null, distanceIntervals: [] };
     }
     const speedOK = paired(old.speed, values.speed);
@@ -216,30 +231,89 @@ function acceptGPS(stats, previous, row, policy) {
             a.verticalFpm = (altitude - oldGPS.altitudeFt) * 60000 / dt;
         } else stats.altitude.anchor = altitude;
     } else stats.altitude.anchor = altitude;
-    const intervals = gpsDistance(stats, previous, row, policy, { startMs: previous.recordedMs, endMs: row.recordedMs,
-        gear, band, speedOK, speedA: old.speed.value, speedB: values.speed.value }, true);
-    return { distance: intervals.length ? intervals.reduce((sum, i) => sum + i.distanceMiles, 0) : null, fuel: null, dt, continuous: true,
+    let intervals;
+    if (policy.calculationVersion === 3 || policy.calculationVersion === 4) {
+        intervals = [];
+        if (speedOK) {
+            const a = old.speed.value, b = values.speed.value, threshold = policy.movingMph;
+            const distance = (a + b) / 2 * dt / 3600000;
+            const movingMs = movingTime(a, b, dt, threshold);
+            const movingMiles = a > threshold && b > threshold ? distance :
+                movingMs > 0 ? (threshold + Math.max(a, b)) / 2 * movingMs / 3600000 : 0;
+            stats.distanceMiles += distance; stats.distanceMs += dt;
+            stats.movingMiles += movingMiles; stats.movingDistanceMs += movingMs;
+            [stats.gears[gear], stats.bands[band]].forEach((target) => {
+                target.distanceMiles += distance; target.distanceMs += dt;
+            });
+            intervals.push({ startMs: previous.recordedMs, endMs: row.recordedMs,
+                distanceMiles: distance, distanceMs: dt, movingDistanceMs: movingMs });
+        }
+    } else {
+        intervals = gpsDistance(stats, previous, row, policy, { startMs: previous.recordedMs, endMs: row.recordedMs,
+            gear, band, speedOK, speedA: old.speed.value, speedB: values.speed.value }, true);
+    }
+    const distance = intervals.length ? intervals.reduce((sum, i) => sum + i.distanceMiles, 0) : null;
+    let fuel = null;
+    if (policy.calculationVersion === 4 && paired(old.fuel, values.fuel) &&
+        old.fuel.epoch !== undefined && old.fuel.epoch !== null &&
+        typeof old.fuel.source === 'string' && old.fuel.source.length > 0 && old.fuel.source === values.fuel.source &&
+        old.fuel.value >= 0 && values.fuel.value >= 0) {
+        fuel = (old.fuel.value + values.fuel.value) / 2 * dt / 3600000;
+        stats.fuelGallons += fuel; stats.fuelMs += dt;
+        [stats.gears[gear], stats.bands[band]].forEach((target) => {
+            target.fuelGallons += fuel; target.fuelMs += dt;
+            if (distance !== null) {
+                target.matchedMiles += distance; target.matchedGallons += fuel; target.matchedMs += dt;
+            }
+        });
+        if (distance !== null) {
+            stats.matchedMiles += distance; stats.matchedGallons += fuel; stats.matchedMs += dt;
+        }
+    }
+    let mpg = null;
+    if (policy.calculationVersion === 4) {
+        if (distance === null || fuel === null) stats.economyWindow = [];
+        else {
+            const cutoff = row.recordedMs - policy.rollingMpgSeconds * 1000, window = stats.economyWindow;
+            window.push({ startMs: previous.recordedMs, endMs: row.recordedMs, distance, fuel });
+            while (window.length && window[0].endMs <= cutoff) window.shift();
+            let miles = 0, gallons = 0;
+            window.forEach((part) => {
+                const fraction = (part.endMs - Math.max(part.startMs, cutoff)) / (part.endMs - part.startMs);
+                miles += part.distance * fraction; gallons += part.fuel * fraction;
+            });
+            if (gallons > 0) mpg = miles / gallons;
+        }
+    }
+    return { distance, fuel, mpg, dt, continuous: true,
         distanceMs: intervals.reduce((sum, i) => sum + i.distanceMs, 0),
         distanceStartMs: intervals.length ? intervals[0].startMs : null, distanceEndMs: intervals.length ? intervals[intervals.length - 1].endMs : null,
         distanceIntervals: intervals };
 }
 function accept(stats, previous, row, policy) {
     if (policy.calculationVersion === 1) return acceptLegacy(stats, previous, row, policy);
-    if (policy.calculationVersion === 2) return acceptGPS(stats, previous, row, policy);
+    if ([2, 3, 4].includes(policy.calculationVersion)) return acceptCurrent(stats, previous, row, policy);
     throw new Error('Unsupported calculation policy');
 }
 function policy(settings) {
-    return { calculationVersion: 2, sampleMs: settings.sampleMs, movingMph: 1,
+    return { calculationVersion: 4, sampleMs: settings.sampleMs, movingMph: 1,
         maxIntervalMs: Math.max(5000, settings.sampleMs * 3), altitudeThresholdFt: settings.altitudeThresholdFt,
         speedBands: settings.speedBands.slice(), rollingMpgSeconds: 60,
-        gpsMaxGapMs: 5000, gpsMaxMph: 250, gpsSpeedToleranceMph: 25, gpsJumpSlackMeters: 15,
-        distance: 'GPS-only antimeridian-safe spherical geodesic between unique advancing 2D/3D UTC fixes, assuming WGS84 degrees (not calibrated on-car); no speed-integrated fallback. Invalid/stale/backward UTC, provider changes and gaps over 5 seconds break continuity. Accuracy is not supplied.',
-        distanceTiming: 'Coverage uses advancing UTC fix intervals mapped to monotonic recorded time by the segment-start wall-clock offset, assuming aligned UTC clocks; receipt and source gaps are independently bounded to 5 seconds. Polls do not establish sensor Hz or coverage. Continuous live vehicle speed is motion evidence only. All-stationary intervals count zero drift distance. Jump limits are rejection rules, not accuracy claims.',
-        distanceAllocation: 'GPS pair distance is allocated over its observed app-sample overlaps in proportion to above-1-mph moving duration, never to stationary duration; gear and speed-band coverage uses those exact overlaps. This is temporal allocation, not a measured per-sample path. No per-sample fuel or MPG is inferred.',
-        speedBandsRule: 'Each bounded app interval uses its trapezoidal-mean vehicle-speed band; unknown speed has its own bucket. GPS coverage/distance is allocated only after an accepted fix pair supports the interval.',
+        distance: 'Trapezoidal integration of live Vehicle2.statusCarSpeed2 in mph over bounded monotonic sample intervals, as upstream trip computers integrate vehicle speed. GPS is not required for distance.',
+        distanceTiming: 'Both endpoint speeds must be live and from the same provider epoch, with no recording-segment change or interval over the configured gap limit. Missing/stale data and interruptions contribute no distance or coverage. Getter cadence is not a sensor-rate claim.',
+        distanceAllocation: 'Each accepted interval belongs to the previous connected gear and the trapezoidal-mean speed band. Moving distance integrates only the above-1-mph portion of the interval. MPG uses only intervals with both speed distance and measured fuel coverage.',
+        speedBandsRule: 'Each bounded app interval uses its trapezoidal-mean vehicle-speed band; unknown speed has its own bucket. Distance and coverage use exactly the same accepted speed intervals.',
+        fuel: 'Trapezoidal integration of live nonnegative fuel flow in US gallons/hour over bounded monotonic sample intervals. Flow comes from read-only physical DME diagnostic consumption or a calibrated injection-volume counter; litres/hour are divided by 3.785411784 before accounting.',
+        fuelTiming: 'Both endpoint flows must be live with the same source and epoch, within one recording segment and the configured gap limit. Missing, stale, invalid, uncalibrated and source-change intervals have no fuel coverage; measured zero flow is valid coverage.',
+        fuelAllocation: 'Fuel belongs to the previous connected gear and mean-speed band, or their unknown buckets. Matched miles, gallons and duration require both fuel and speed coverage for the identical interval; unmatched fuel remains in the observed fuel total.',
+        fuelEconomy: 'Rolling 60-second MPG is summed matched miles / summed matched gallons, reset at missing coverage or a source/epoch/recording break. A boundary interval is time-prorated; individual MPG readings are never averaged.',
+        context: 'First and last live odometer (miles) and tank (US gallons) values retain their sources as optional context only. Neither tank differences nor odometer differences derive consumption or trip distance.',
         gear: 'Previous valid connected state holds for each bounded interval; actual gearbox precedes explicit selector fallback. Count direct forward 1–10 changes only within one source/connection; gaps, source changes and P/R/N/NP do not count as shifts.',
         elevation: 'First/last accepted altitude; ascent/descent use a deadband anchor, reset at gaps. Vertical speed is an unsmoothed adjacent-sample estimate.',
         duration: 'Monotonic recorded duration includes stationary periods and in-process sample gaps; recovery downtime is separate.',
-        capabilities: { speed: true, rpm: true, fuel: false, ignition: false, gps: true, gear: 'actual gearbox enum, explicit selector fallback; no guessed gears' } };
+        capabilities: { speed: true, rpm: true, engine: true, fuel: true, ignition: false, gps: true,
+            fuelUnit: 'US gal/h', fuelTotalUnit: 'US gal', fuelCoverage: 'Only live same-source, same-epoch endpoint pairs; unavailable data is not zero',
+            odometer: 'optional live miles; context only', tank: 'optional live US gallons; context only',
+            gear: 'actual gearbox enum, explicit selector fallback; no guessed gears' } };
 }
 module.exports = { bucket, create, accept, policy };

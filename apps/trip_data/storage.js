@@ -61,7 +61,7 @@ class Storage {
         const file = path.join(dir, 'summary.json');
         if (fs.statSync(file).size > 1024 * 1024) throw new Error('Trip summary exceeds supported size');
         const s = JSON.parse(fs.readFileSync(file, 'utf8'));
-        if (!s || ![1, 2].includes(s.schemaVersion) || s.id !== id || !s.policy || ![1, 2].includes(s.policy.calculationVersion) ||
+        if (!s || ![1, 2].includes(s.schemaVersion) || s.id !== id || !s.policy || ![1, 2, 3, 4].includes(s.policy.calculationVersion) ||
             !s.stats || !Number.isFinite(s.stats.durationMs) || s.stats.durationMs < 0 ||
             !['recording', 'finished', 'interrupted'].includes(s.status) || typeof s.name !== 'string' ||
             !Number.isFinite(s.startedAt) || !Array.isArray(s.gaps)) throw new Error('Invalid or unsupported trip summary; preserved');
@@ -69,6 +69,10 @@ class Storage {
             !Number.isFinite(s.stats.movingDistanceMs) || s.stats.movingDistanceMs < 0 ||
             !['gpsMaxGapMs', 'gpsMaxMph', 'gpsSpeedToleranceMph', 'gpsJumpSlackMeters'].every((k) => Number.isFinite(s.policy[k]) && s.policy[k] > 0) ||
             !Array.isArray(s.policy.speedBands))) throw new Error('Invalid GPS calculation policy; preserved');
+        if ([3, 4].includes(s.policy.calculationVersion) && (!Number.isFinite(s.stats.distanceMs) || s.stats.distanceMs < 0 ||
+            !Number.isFinite(s.stats.movingDistanceMs) || s.stats.movingDistanceMs < 0 ||
+            !Number.isFinite(s.policy.maxIntervalMs) || s.policy.maxIntervalMs <= 0 ||
+            !Array.isArray(s.policy.speedBands))) throw new Error('Invalid vehicle-speed calculation policy; preserved');
         return s;
     }
     history() {
@@ -135,10 +139,10 @@ class Storage {
     async recover(id) {
         const summary = this.read(id);
         if (summary.status === 'finished') throw new Error('Finished trips cannot be recovered');
-        const resumable = summary.policy.calculationVersion === 2, stats = resumable ? C.create(summary.policy) : null;
+        const resumable = [2, 3, 4].includes(summary.policy.calculationVersion), stats = resumable ? C.create(summary.policy) : null;
         let last = null;
         await this.samples(id, (row) => { if (resumable) C.accept(stats, last, row, summary.policy); last = row; });
-        // Legacy saved totals and speed-derived provenance stay untouched, even when closing after interruption.
+        // Preserve version-1 totals; rebuild resumable trips with their own immutable policy.
         if (resumable) summary.stats = stats;
         summary.status = 'interrupted';
         if (last) {

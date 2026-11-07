@@ -2,7 +2,7 @@
   "id": "trip_data",
   "title": "Trip Data",
   "description": "Custom graphical trip dashboard, history, elevation, fuel, gear statistics and recording recovery",
-  "version": "1.4.0",
+  "version": "1.6.0",
   "vendor": "custom",
   "loggingId": "OA9F",
   "iconGlyph": "TRIP",
@@ -15,9 +15,22 @@
       "statusCarSpeed2": "rs"
     },
     "de.bmw.infotainment.vehicle.CDS": {
-      "statusEngineSpeed2": "rs"
+      "statusEngineSpeed2": "rs",
+      "statusEngineStatus": "rs"
+    },
+    "de.bmw.infotainment.vehicle.CDS2": {
+      "statusInjectionVolume": "rs"
+    },
+    "de.bmw.infotainment.KombiIF": {
+      "statusRangeTankStatus": "rs"
+    },
+    "com.harman.infotainment.systemfunctions.tasu.tasu.InternalTasu": {
+      "_instances": "SystemFunctionsInternalTasuInst1",
+      "_methods": ["sendTasuRequest"],
+      "_broadcasts": ["sendTasuResponse"]
     },
     "de.bmw.infrastructure.VehicleInformation": {
+      "Range": "s",
       "DataPowerTrain2": "s",
       "statusGearboxDrive": "s"
     },

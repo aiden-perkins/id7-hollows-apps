@@ -18,9 +18,10 @@ mgu.run({
             decoderSource: fs.readFileSync(path.join(__dirname, 'definitions.js'), 'utf8'),
             tripRecorder: { definitions: Trip.DEFINITIONS, notes: Trip.NOTES,
                 sourceCode: fs.readFileSync(path.join(__dirname, 'trip_data', 'sources.js'), 'utf8'),
+                fuelSourceCode: fs.readFileSync(path.join(__dirname, 'trip_data', 'fuel.js'), 'utf8'),
                 calculationCode: fs.readFileSync(path.join(__dirname, 'trip_data', 'calculations.js'), 'utf8') },
             timing: 'Local arrival timestamps in Unix milliseconds; no synchronized ECU clock. Getter replies count as deliveries. Shared diagnostic queue limits actual sampling rates.',
-            schema: 'catalog/session records describe each session; delivery records contain complete raw payloads and decoded readings; diagnostic-frame records also preserve rejected replies; path-status records include unsupported and never-delivered paths. trip-catalog describes Trip Data sources and calculation policy; trip-delivery and trip-transport preserve its raw inputs and provider states; trip-sample contains decoded values, GPS distance intervals and accumulated trip statistics for this logger session.' };
+            schema: 'catalog/session records describe each session; delivery records contain complete raw payloads and decoded readings; diagnostic-frame records also preserve rejected replies; path-status records include unsupported and never-delivered paths. trip-catalog describes Trip Data sources and calculation policy; trip-delivery and trip-transport preserve its raw inputs and provider states; trip-fuel records preserve diagnostic/counter fuel provenance; trip-sample contains decoded values, vehicle-speed distance intervals, fuel usage/coverage and accumulated trip statistics for this logger session.' };
         const text = (name, value) => {
             if (cache[name] === value || closed) return;
             cache[name] = value;

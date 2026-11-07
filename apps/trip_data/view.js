@@ -22,12 +22,13 @@ function movingDistanceCoverage(summary) {
     return finite(ms) && ms > 0 ? ms : 0;
 }
 function distanceSource(summary) {
-    return summary && summary.policy && summary.policy.calculationVersion === 1 ?
-        'Legacy vehicle-speed integration' : 'GPS / WGS84 degrees assumed / unverified on-car';
+    const version = summary && summary.policy && summary.policy.calculationVersion;
+    return version === 1 ? 'Legacy vehicle-speed integration' : version === 3 || version === 4 ? 'Vehicle-speed integration' :
+        'GPS / WGS84 degrees assumed / unverified on-car';
 }
 function records(history) {
     const trips = (history || []).filter((s) => s && !s.demo && s.status === 'finished' && s.stats && s.policy &&
-        [1, 2].includes(s.policy.calculationVersion) && finite(s.stats.durationMs) && s.stats.durationMs > 0)
+        [1, 2, 3, 4].includes(s.policy.calculationVersion) && finite(s.stats.durationMs) && s.stats.durationMs > 0)
         .slice().sort((a, b) => a.startedAt - b.startedAt || String(a.id).localeCompare(String(b.id)));
     const complete = (s) => !s.missingWallMs && !(s.gaps && s.gaps.length) && !s.interruptionReason &&
         !/interrupt|recover/i.test(s.finishReason || '');

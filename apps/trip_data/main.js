@@ -1,5 +1,6 @@
 'use strict';
 const mgu = require('./kit/mgu');
+const { Diag } = require('./kit/diag');
 const { Storage } = require('./storage');
 const { Sources, mono } = require('./sources');
 const { Recorder } = require('./recorder');
@@ -15,7 +16,7 @@ mgu.run({
             if (event && /^automatic-/.test(event.type)) pendingSession = event;
             dirty = true; if (loop) loop.kick();
         };
-        const sources = new Sources(ctx, changed), recorder = new Recorder(storage, sources, changed);
+        const sources = new Sources(ctx, changed, Diag), recorder = new Recorder(storage, sources, changed);
         Object.assign(ctx.settings.values, recorder.settings);
         let demo = ctx.settings.get('demo') === 'on' ? new Demo(recorder.settings) : null;
         const state = {
@@ -210,7 +211,7 @@ mgu.run({
                 action('edit', 'Rename / annotate', edit, !!saved && saved.status === 'finished', 'Edit the saved trip with the graphical keyboard'),
                 action('delete', 'Delete saved trip', confirmDelete, !!saved && saved.status === 'finished', 'Review and confirm before deleting'),
                 action('recover', 'Recover recording', () => exclusive(recover), !!saved && saved.status !== 'finished' &&
-                    saved.policy.calculationVersion === 2 && !active, 'Continue GPS recording with an explicit missing interval; legacy speed trips can only be closed'),
+                    [2, 3, 4].includes(saved.policy.calculationVersion) && !active, 'Continue with this trip\'s recorded calculation policy and an explicit missing interval'),
                 action('close', 'Close interrupted trip', () => exclusive(closeInterrupted), !!saved && saved.status !== 'finished' && !active, 'Keep only the samples already recorded'),
             ];
             if (state.page === 'elevation') return [];
@@ -283,7 +284,7 @@ mgu.run({
             const gps = sources.sample(mono()).gps;
             const age = (ms) => Number.isFinite(ms) ? V.number(ms / 1000, 's') : 'unknown';
             const gpsStatus = sources.mode === 'full' ? 'GPS ' + (gps.positionState || gps.state) +
-                ': fix age ' + age(gps.fixAgeMs) + ', receipt age ' + age(gps.ageMs) : 'GPS distance collects while recording';
+                ': fix age ' + age(gps.fixAgeMs) + ', receipt age ' + age(gps.ageMs) : 'GPS position/elevation collects while recording';
             nativeText('PREF_DETAIL', 'Recording interval: ' + p.sampleMs + ' ms (fixed per trip)');
             nativeText('PREF_AUTO', 'Automatic engine-session recording: ' + recorder.automaticStatus());
             nativeText('PREF_ALTITUDE', 'Elevation noise deadband: ' + p.altitudeThresholdFt + ' ft');
@@ -294,7 +295,8 @@ mgu.run({
             nativeText('PREF_DEMO', 'Demo data: ' + (demo ? 'on / memory only' : 'off'));
             nativeText('PREF_NOTICE', recorder.error || state.notice || storage.errors.join(' | ') ||
                 (demo ? 'SIMULATED DATA. Demo trips are never recorded or added to real history.' :
-                    gpsStatus + '. WGS84 degrees/accuracy unverified. RPM sessions are not ignition; stop/start may split trips. App must be running. Fuel/MPG unavailable.'));
+                    'New trips use vehicle-speed distance and CDS engine status. ' + gpsStatus +
+                    '. GPS reference/accuracy unverified. Engine sessions are not ignition; stop/start may split trips. App must be running. Fuel uses DME diagnostics and the calibrated CDS injection counter when supported.'));
         }
         const setting = (name, key, options) => bind(name, () => {
             const value = recorder.settings[key], next = options ? options[(options.indexOf(value) + 1) % options.length] : !value;

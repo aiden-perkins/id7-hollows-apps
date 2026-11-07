@@ -105,7 +105,7 @@ def build(args):
                 shutil.copy2(viewer / name, app / name)
             trip = args.root / 'apps' / 'trip_data'
             (app / 'trip_data').mkdir()
-            for name in ('sources.js', 'calculations.js', 'storage.js'):
+            for name in ('sources.js', 'fuel.js', 'calculations.js', 'storage.js'):
                 shutil.copy2(trip / name, app / 'trip_data' / name)
             viewer_spec = json.loads((viewer / 'app.json').read_text(encoding='utf-8'))
             spec['signals'] = viewer_spec['signals']

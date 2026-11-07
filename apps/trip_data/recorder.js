@@ -1,9 +1,9 @@
 'use strict';
 const crypto = require('crypto');
 const C = require('./calculations');
-const { mono } = require('./sources');
+const { mono, DEFINITIONS, NOTES } = require('./sources');
 
-const ENGINE_SESSION = { runningRpm: 400, startMs: 2000, stopMs: 3000 };
+const ENGINE_SESSION = { source: 'CDS.statusEngineStatus.statusEngineRunDrive', startMs: 2000, stopMs: 3000 };
 
 class Recorder {
     constructor(storage, sources, changed) {
@@ -38,8 +38,8 @@ class Recorder {
         clearInterval(this.automaticTimer); this.automaticTimer = null;
         if (this.closed) return;
         const wanted = this.automaticEnabled && this.settings.automatic && !this.automaticFault;
-        if (this.active && this.active.status === 'recording') this.sources.start(this.active.policy.sampleMs);
-        else if (wanted && !this.active && !this.interrupted.length) this.sources.monitor(this.settings.sampleMs);
+        if (this.active && this.active.status === 'recording') this.sources.start();
+        else if (wanted && !this.active && !this.interrupted.length) this.sources.monitor();
         else this.sources.stop();
         if (wanted && (!this.active || this.active.status === 'recording') && !this.interrupted.length) {
             this.automaticTimer = setInterval(() => this.observeEngine(), 250);
@@ -52,22 +52,22 @@ class Recorder {
         if (this.automaticFault) return 'paused after recording error';
         if (this.interrupted.length || this.active && this.active.status !== 'recording') return 'resolve interrupted trips first';
         if (this.automaticHold && !this.active) return 'waiting for engine off, then next start';
-        if (this.active) return 'recording / waiting for sustained zero RPM';
-        return this.engineState === 'off' ? 'armed / engine stopped' : 'armed / waiting for live running RPM';
+        if (this.active) return 'recording / waiting for engine-off status';
+        return this.engineState === 'off' ? 'armed / engine stopped' : 'armed / waiting for engine-running status';
     }
     observeEngine() {
         if (this.closed || !this.automaticEnabled || !this.settings.automatic || this.automaticFault ||
             this.interrupted.length || this.active && this.active.status !== 'recording') return;
-        const now = mono(), rpm = this.sources.sample(now).rpm;
-        const state = rpm && rpm.state === 'live' && Number.isFinite(rpm.value) ?
-            rpm.value === 0 ? 'off' : rpm.value >= ENGINE_SESSION.runningRpm ? 'running' : 'unknown' : 'unknown';
+        const now = mono(), engine = this.sources.sample(now).engine;
+        const state = engine && engine.state === 'live' ?
+            engine.value === 'off' ? 'off' : engine.value === 'running' || engine.value === 'starting' ? 'running' : 'unknown' : 'unknown';
         if (state === 'unknown') { this.engineCandidate = null; return; }
-        if (!this.engineCandidate || this.engineCandidate.state !== state || this.engineCandidate.epoch !== rpm.epoch) {
-            this.engineCandidate = { state, since: now, receivedMono: rpm.receivedMono, epoch: rpm.epoch };
+        if (!this.engineCandidate || this.engineCandidate.state !== state || this.engineCandidate.epoch !== engine.epoch) {
+            this.engineCandidate = { state, since: now, receivedMono: engine.receivedMono, epoch: engine.epoch };
             return;
         }
         const delay = state === 'running' ? ENGINE_SESSION.startMs : ENGINE_SESSION.stopMs;
-        if (now - this.engineCandidate.since < delay || rpm.receivedMono <= this.engineCandidate.receivedMono) return;
+        if (now - this.engineCandidate.since < delay || engine.receivedMono <= this.engineCandidate.receivedMono) return;
         const actionNeeded = state === 'off' ? this.automaticHold || !!this.active : !this.active && !this.automaticHold;
         if (state === this.engineState && !actionNeeded) return;
         this.engineState = state;
@@ -92,7 +92,7 @@ class Recorder {
         try { this.storage.save(summary); } catch (e) {
             summary.status = 'interrupted'; this.error = 'Could not checkpoint recording start: ' + e.message; throw e;
         }
-        this.sources.start(summary.policy.sampleMs);
+        this.sources.start();
         this.timer = setInterval(() => this.tick(), summary.policy.sampleMs);
         if (this.timer.unref) this.timer.unref();
         this.tick(); this.changed();
@@ -109,9 +109,12 @@ class Recorder {
     async recover(id) {
         if (this.active) throw new Error('A trip is already recording');
         const rebuilt = await this.storage.recover(id), s = rebuilt.summary;
-        if (s.policy.calculationVersion !== 2) throw new Error('Legacy speed-distance trips can be closed, but cannot resume into GPS recording.');
+        if (![2, 3, 4].includes(s.policy.calculationVersion)) throw new Error('Legacy trips can be closed, but cannot resume into the current recorder.');
         const gap = Math.max(0, Date.now() - (s.lastWallAt || s.startedAt));
-        s.gaps.push({ after: s.lastWallAt || s.startedAt, before: Date.now(), wallMs: gap, reason: 'Process interruption; no measurements inferred' });
+        s.gaps.push({ after: s.lastWallAt || s.startedAt, before: Date.now(), wallMs: gap,
+            reason: 'Process interruption; no measurements inferred',
+            resumedSources: DEFINITIONS, resumedSourceNotes: NOTES,
+            resumedEngineSessionPolicy: this.settings.automatic ? Object.assign({}, ENGINE_SESSION) : null });
         s.missingWallMs += gap;
         this.interrupted = this.interrupted.filter((v) => v.id !== id);
         this.begin(s, rebuilt.last); this.syncAutomatic();
@@ -129,7 +132,7 @@ class Recorder {
                 row.distanceStartMs = interval.distanceStartMs; row.distanceEndMs = interval.distanceEndMs;
                 row.distanceIntervals = interval.distanceIntervals;
             }
-            row.mpg = null;
+            row.mpg = Number.isFinite(interval.mpg) ? interval.mpg : null;
             this.previous = row; s.lastWallAt = row.wallAt; s.timelineMs = row.elapsedMs;
             this.buffer.push(row); this.recent.push(row);
             if (this.recent.length > 1200) this.recent.shift();

@@ -2,14 +2,15 @@
   "id": "data_logger",
   "title": "Data Logger",
   "description": "Record all Live Data Viewer and Trip Recorder data, combine saved sessions, and download to your phone",
-  "version": "1.1.0",
+  "version": "1.3.0",
   "vendor": "custom",
   "loggingId": "OA9K",
   "iconGlyph": "LOG",
   "signals": {
     "de.bmw.infotainment.vehicle.CDS": {
       "statusEngineTemperature": "rs",
-      "statusEngineSpeed2": "rs"
+      "statusEngineSpeed2": "rs",
+      "statusEngineStatus": "rs"
     },
     "de.bmw.infotainment.vehicle.Vehicle": {
       "statusNewCurrentUnitsStatusExt": "rs"
@@ -31,6 +32,7 @@
       "ExteriorTemperature": "s"
     },
     "de.bmw.infotainment.vehicle.CDS2": {
+      "statusInjectionVolume": "rs",
       "statusLongitudinalAccelerationMassCenter": "rs",
       "statusLateralAccelerationMassCenter": "rs"
     },
@@ -58,7 +60,11 @@
         "sendTasuResponse"
       ]
     },
+    "de.bmw.infotainment.KombiIF": {
+      "statusRangeTankStatus": "rs"
+    },
     "de.bmw.infrastructure.VehicleInformation": {
+      "Range": "s",
       "DataPowerTrain2": "s",
       "statusGearboxDrive": "s"
     },
@@ -115,7 +121,7 @@
         [
           "text3",
           "HELP",
-          "Records all Live Data Viewer and Trip Recorder measurement paths together while this app is running, including in the background. Includes raw inputs, GPS/elevation, speed/RPM, gearbox/selector, availability and per-session trip calculations. Fuel/MPG remain unavailable where Trip Recorder has no validated source. Existing Trip Recorder history is not imported. Stop before switching the car off. Combine creates one JSON Lines (.jsonl) file from every saved logger session; each line is a JSON record. Connect the car to your phone hotspot, enable download, and open the displayed link on your phone. Download is local, unencrypted and token-protected: keep the link private and turn sharing off afterwards. Hotspot routing or a car firewall may prevent access. GPS and other private vehicle data may be included. Logging stops at 256 MiB; saved data is never automatically deleted."
+          "Records all Live Data Viewer and Trip Recorder measurement paths together while this app is running, including in the background. Includes raw inputs, GPS/elevation, speed/RPM, CDS engine status, gearbox/selector, odometer/tank context, availability and per-session vehicle-speed trip calculations. Fuel usage and matched MPG use read-only DME flow and the calibrated CDS injection counter when supported; missing fuel is not recorded as zero. Existing Trip Recorder history is not imported. Stop before switching the car off. Combine creates one JSON Lines (.jsonl) file from every saved logger session; each line is a JSON record. Connect the car to your phone hotspot, enable download, and open the displayed link on your phone. Download is local, unencrypted and token-protected: keep the link private and turn sharing off afterwards. Hotspot routing or a car firewall may prevent access. GPS and other private vehicle data may be included. Logging stops at 256 MiB; saved data is never automatically deleted."
         ]
       ]
     }

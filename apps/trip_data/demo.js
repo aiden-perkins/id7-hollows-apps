@@ -31,7 +31,7 @@ class Demo {
             const value = (n) => ({ state: 'live', value: n, epoch: 1, note: 'Simulated demo data' });
             this.live = { speed: value(data.speed / 1.609344), rpm: value(data.rpm),
                 gear: value(data.gear ? String(data.gear) : 'P'),
-                fuel: { state: 'unavailable', value: null, epoch: 1, note: 'No validated consumed-fuel source' },
+                fuel: { state: 'unavailable', value: null, epoch: 1, note: 'Demo does not simulate diagnostic fuel flow' },
                 gps: { state: 'live', epoch: 1, heightEpoch: 1, positionState: 'live', coordinateEpoch: 1,
                     coordinates, fixId: fix.id, fixTimeMs: fix.utcMs, fixes: [fix], ageMs: 0, fixAgeMs: 0,
                     altitudeFt: 1240 + (this.at - this.startedAt) / 1000 * 0.3 + 160 * Math.sin((this.at - this.startedAt) / 90000) } };
