@@ -5,19 +5,21 @@ class Storage {
     constructor(dir) { this.dir = dir; this.error = ''; this.blocked = false; this.serial = 0; }
     loadSettings() {
         const defaults = { schemaVersion: 1, units: 'US', precision: 3, dateFormat: 'US12',
-            order: ['driving', 'dynamics', 'temperatures', 'health'], trendSeconds: 180, refreshMs: 100,
-            boostSource: 'auto', boostSeen: [] };
+            order: ['driving', 'dynamics', 'temperatures', 'health', 'bm3'], trendSeconds: 180, refreshMs: 100,
+            boostSource: 'auto', boostSeen: [], bm3Engine: 'unset' };
         try {
             const s = JSON.parse(fs.readFileSync(path.join(this.dir, 'settings.json'), 'utf8'));
             if (!s || s.schemaVersion !== 1 || s.units !== 'US' || s.precision !== 3 || s.dateFormat !== 'US12' ||
                 ![60, 180, 600].includes(s.trendSeconds) || ![100, 250, 500, 1000, 2000].includes(s.refreshMs) ||
-                !Array.isArray(s.order) || ![3, 4].includes(s.order.length) || new Set(s.order).size !== s.order.length ||
+                !Array.isArray(s.order) || ![3, 4, 5].includes(s.order.length) || new Set(s.order).size !== s.order.length ||
                 !s.order.every((id) => defaults.order.includes(id)) ||
                 !['driving', 'temperatures', 'health'].every((id) => s.order.includes(id))) throw new Error('Unsupported schema or invalid preferences');
             const order = s.order.slice();
             if (!order.includes('dynamics')) order.splice(order.indexOf('driving') + 1, 0, 'dynamics');
+            if (!order.includes('bm3')) order.push('bm3');
             return Object.assign(defaults, { order, trendSeconds: s.trendSeconds, refreshMs: s.refreshMs,
                 boostSource: ['auto', 'fes', 'dme'].includes(s.boostSource) ? s.boostSource : 'auto',
+                bm3Engine: typeof s.bm3Engine === 'string' && /^[A-Za-z0-9-]{1,24}$/.test(s.bm3Engine) ? s.bm3Engine : 'unset',
                 boostSeen: Array.isArray(s.boostSeen) ? s.boostSeen.filter((id) => ['boostFes', 'boostDme'].includes(id)) : [] });
         } catch (e) {
             if (e.code !== 'ENOENT') { this.error = 'Settings preserved: ' + e.message; this.blocked = true; }

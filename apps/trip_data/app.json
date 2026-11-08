@@ -1,8 +1,8 @@
 {
   "id": "trip_data",
   "title": "Trip Data",
-  "description": "Custom graphical trip dashboard, history, elevation, fuel, gear statistics and recording recovery",
-  "version": "1.6.0",
+  "description": "Trip dashboard with vehicle-style tabs, trip history and independent recording recovery",
+  "version": "1.7.0",
   "vendor": "custom",
   "loggingId": "OA9F",
   "iconGlyph": "TRIP",
@@ -33,9 +33,6 @@
       "Range": "s",
       "DataPowerTrain2": "s",
       "statusGearboxDrive": "s"
-    },
-    "de.bmw.infotainment.controlelements.FrontCCU": {
-      "statusRotaryEncoderState": "rs"
     }
   },
   "screens": [
@@ -44,8 +41,13 @@
       "kind": "canvas",
       "title": "Trip Data",
       "graphic": "MAIN_GFX",
-      "bar": false,
-      "buttons": []
+      "buttons": [
+        ["BTN_RECORD", "Start trip"],
+        ["BTN_CURRENT", "Current trip"],
+        ["BTN_OPTIONS", "Options"],
+        ["BTN_BACK", "Back"],
+        ["BTN_SETTINGS", "Settings"]
+      ]
     },
     {
       "name": "SETTINGS",

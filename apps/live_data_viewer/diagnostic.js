@@ -41,6 +41,7 @@ class DiagnosticServices {
         this.closed = false; this.generation = 0; this.signature = ''; this.groups = [];
         this.link = null; this.pending = null; this.timer = null; this.control = null; this.fastReads = 0; this.picks = {};
         this.lengths = new Map(); this.noBatch = new Set(); this.busyUntil = 0;
+        this.idleWaiters = [];
     }
     activate(definitions) {
         if (this.closed) return;
@@ -489,9 +490,14 @@ class DiagnosticServices {
         // Even a response timeout cannot start a second native call before the first settles.
         this._release(op);
     }
+    idle() {
+        if (!this.pending) return Promise.resolve();
+        return new Promise((resolve) => this.idleWaiters.push(resolve));
+    }
     _release(op) {
         if (!op.done || !op.sendSettled || this.pending !== op) return;
         this.pending = null;
+        this.idleWaiters.splice(0).forEach((resolve) => resolve());
         this._wake();
     }
     close() {

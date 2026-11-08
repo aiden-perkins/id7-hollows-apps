@@ -9,13 +9,13 @@ class Recorder {
     constructor(storage, sources, changed) {
         this.storage = storage; this.sources = sources; this.changed = changed;
         this.settings = storage.settings(); this.active = null; this.previous = null; this.buffer = [];
-        this.recent = []; this.closed = false; this.timer = null; this.error = '';
+        this.recent = []; this.closed = false; this.recovering = false; this.timer = null; this.error = '';
         this.history = storage.history(); this.interrupted = this.history.filter((s) => s.status !== 'finished');
         this.automaticEnabled = false; this.automaticHold = this.settings.engineSessionHold === true; this.automaticFault = false;
         this.engineState = 'unknown'; this.engineCandidate = null; this.automaticTimer = null;
     }
     configure(key, value) {
-        if (this.active && key !== 'smoothing') throw new Error('Recording policy is fixed for the active trip. Finish it before changing recording settings.');
+        if (this.active && this.active.status === 'recording' && key !== 'smoothing') throw new Error('Recording policy is fixed for the active trip. Finish it before changing recording settings.');
         const next = Object.assign({}, this.settings, { [key]: value });
         this.storage.saveSettings(next); this.settings = next;
         this.engineCandidate = null; this.automaticFault = false; this.syncAutomatic(); this.changed();
@@ -37,11 +37,11 @@ class Recorder {
     syncAutomatic() {
         clearInterval(this.automaticTimer); this.automaticTimer = null;
         if (this.closed) return;
-        const wanted = this.automaticEnabled && this.settings.automatic && !this.automaticFault;
+        const wanted = this.automaticEnabled && this.settings.automatic && !this.automaticFault && !this.recovering;
         if (this.active && this.active.status === 'recording') this.sources.start();
-        else if (wanted && !this.active && !this.interrupted.length) this.sources.monitor();
+        else if (wanted) this.sources.monitor();
         else this.sources.stop();
-        if (wanted && (!this.active || this.active.status === 'recording') && !this.interrupted.length) {
+        if (wanted) {
             this.automaticTimer = setInterval(() => this.observeEngine(), 250);
             if (this.automaticTimer.unref) this.automaticTimer.unref();
         }
@@ -50,14 +50,14 @@ class Recorder {
         if (!this.settings.automatic) return 'off';
         if (!this.automaticEnabled) return 'paused in demo/preview';
         if (this.automaticFault) return 'paused after recording error';
-        if (this.interrupted.length || this.active && this.active.status !== 'recording') return 'resolve interrupted trips first';
-        if (this.automaticHold && !this.active) return 'waiting for engine off, then next start';
-        if (this.active) return 'recording / waiting for engine-off status';
+        if (this.recovering) return 'recovering saved trip';
+        const recording = this.active && this.active.status === 'recording';
+        if (this.automaticHold && !recording) return 'waiting for engine off, then next start';
+        if (recording) return 'recording / waiting for engine-off status';
         return this.engineState === 'off' ? 'armed / engine stopped' : 'armed / waiting for engine-running status';
     }
     observeEngine() {
-        if (this.closed || !this.automaticEnabled || !this.settings.automatic || this.automaticFault ||
-            this.interrupted.length || this.active && this.active.status !== 'recording') return;
+        if (this.closed || this.recovering || !this.automaticEnabled || !this.settings.automatic || this.automaticFault) return;
         const now = mono(), engine = this.sources.sample(now).engine;
         const state = engine && engine.state === 'live' ?
             engine.value === 'off' ? 'off' : engine.value === 'running' || engine.value === 'starting' ? 'running' : 'unknown' : 'unknown';
@@ -68,14 +68,15 @@ class Recorder {
         }
         const delay = state === 'running' ? ENGINE_SESSION.startMs : ENGINE_SESSION.stopMs;
         if (now - this.engineCandidate.since < delay || engine.receivedMono <= this.engineCandidate.receivedMono) return;
-        const actionNeeded = state === 'off' ? this.automaticHold || !!this.active : !this.active && !this.automaticHold;
+        const recording = this.active && this.active.status === 'recording';
+        const actionNeeded = state === 'off' ? this.automaticHold || recording : !recording && !this.automaticHold;
         if (state === this.engineState && !actionNeeded) return;
         this.engineState = state;
         try {
             if (state === 'off') {
                 this.setAutomaticHold(false);
-                if (this.active) this.finish('engine stopped');
-            } else if (!this.active && !this.automaticHold) this.start('engine running');
+                if (recording) this.finish('engine stopped');
+            } else if (!recording && !this.automaticHold) this.start('engine running');
             this.changed();
         } catch (e) {
             this.automaticFault = true;
@@ -95,32 +96,57 @@ class Recorder {
         this.sources.start();
         this.timer = setInterval(() => this.tick(), summary.policy.sampleMs);
         if (this.timer.unref) this.timer.unref();
-        this.tick(); this.changed();
+        this.tick();
+        if (this.active.status !== 'recording') throw new Error(this.active.interruptionReason || this.error);
+        this.automaticFault = false; this.syncAutomatic();
+        this.changed();
+    }
+    checkpointInterrupted() {
+        if (!this.active) return;
+        this.flush();
+        this.storage.index();
+        const history = this.storage.history();
+        this.history = history; this.interrupted = history.filter((s) => s.status !== 'finished');
+        this.active = null; this.previous = null; this.recent = [];
     }
     start(reason) {
-        if (this.active) throw new Error('A trip is already recording');
-        if (this.interrupted.length) throw new Error('Recover or close interrupted trips before starting another trip');
-        const summary = this.storage.create(this.settings);
-        summary.startReason = reason || 'manual';
-        if (this.settings.automatic) summary.engineSessionPolicy = Object.assign({}, ENGINE_SESSION);
-        try { this.begin(summary, null); } catch (e) { this.fail(e); throw e; }
+        if (this.closed) throw new Error('Recorder is closed');
+        if (this.recovering) throw new Error('Trip recovery is already in progress');
+        if (this.active && this.active.status === 'recording') throw new Error('A trip is already recording');
+        let summary;
+        try {
+            this.checkpointInterrupted();
+            summary = this.storage.create(this.settings);
+            summary.startReason = reason || 'manual';
+            if (this.settings.automatic) summary.engineSessionPolicy = Object.assign({}, ENGINE_SESSION);
+            this.begin(summary, null);
+        } catch (e) { this.fail(e); throw e; }
         if (reason === 'engine running' && this.active.status === 'recording') this.changed({ type: 'automatic-start', trip: summary });
     }
     async recover(id) {
-        if (this.active) throw new Error('A trip is already recording');
-        const rebuilt = await this.storage.recover(id), s = rebuilt.summary;
-        if (![2, 3, 4].includes(s.policy.calculationVersion)) throw new Error('Legacy trips can be closed, but cannot resume into the current recorder.');
-        const gap = Math.max(0, Date.now() - (s.lastWallAt || s.startedAt));
-        s.gaps.push({ after: s.lastWallAt || s.startedAt, before: Date.now(), wallMs: gap,
-            reason: 'Process interruption; no measurements inferred',
-            resumedSources: DEFINITIONS, resumedSourceNotes: NOTES,
-            resumedEngineSessionPolicy: this.settings.automatic ? Object.assign({}, ENGINE_SESSION) : null });
-        s.missingWallMs += gap;
-        this.interrupted = this.interrupted.filter((v) => v.id !== id);
-        this.begin(s, rebuilt.last); this.syncAutomatic();
+        if (this.closed) throw new Error('Recorder is closed');
+        if (this.recovering) throw new Error('Trip recovery is already in progress');
+        if (this.active && this.active.status === 'recording') throw new Error('A trip is already recording');
+        this.recovering = true; this.syncAutomatic();
+        try {
+            try { this.checkpointInterrupted(); } catch (e) { this.fail(e); throw e; }
+            const rebuilt = await this.storage.recover(id), s = rebuilt.summary;
+            if (this.closed) throw new Error('Recorder closed during trip recovery');
+            if (![2, 3, 4].includes(s.policy.calculationVersion)) throw new Error('Legacy trips can be closed, but cannot resume into the current recorder.');
+            const gap = Math.max(0, Date.now() - (s.lastWallAt || s.startedAt));
+            s.gaps.push({ after: s.lastWallAt || s.startedAt, before: Date.now(), wallMs: gap,
+                reason: 'Process interruption; no measurements inferred',
+                resumedSources: DEFINITIONS, resumedSourceNotes: NOTES,
+                resumedEngineSessionPolicy: this.settings.automatic ? Object.assign({}, ENGINE_SESSION) : null });
+            s.missingWallMs += gap;
+            try { this.begin(s, rebuilt.last); } catch (e) { this.fail(e); throw e; }
+            this.interrupted = this.interrupted.filter((v) => v.id !== id);
+        } finally {
+            this.recovering = false; this.syncAutomatic(); this.changed();
+        }
     }
     tick() {
-        if (!this.active || this.closed) return;
+        if (!this.active || this.active.status !== 'recording' || this.closed) return;
         try {
             const now = mono(), s = this.active;
             const row = { schemaVersion: 2, segment: this.segment, recordedMs: this.segmentBase + Math.max(0, now - this.segmentMono),
@@ -162,13 +188,18 @@ class Recorder {
         clearInterval(this.timer); this.timer = null;
         this.error = 'Recording interrupted: ' + e.message + '. Saved chunks retained; unflushed samples remain in memory while the app stays open.';
         if (this.active) {
-            this.active.status = 'interrupted'; this.active.interruptionReason = 'Recording failed: ' + e.message;
+            this.active.status = 'interrupted'; this.active.endedAt = null;
+            delete this.active.finishReason;
+            this.active.interruptionReason = 'Recording failed: ' + e.message;
         }
         this.automaticFault = true; this.syncAutomatic(); this.changed();
     }
     finish(reason) {
         if (!this.active) throw new Error('No active trip');
-        if (this.active.status === 'recording') this.tick();
+        if (this.active.status === 'recording') {
+            this.tick();
+            if (this.active.status !== 'recording') throw new Error(this.active.interruptionReason);
+        }
         clearInterval(this.timer); this.timer = null;
         const s = this.active;
         try {
@@ -178,8 +209,8 @@ class Recorder {
             }
             this.flush(); s.status = 'finished'; s.endedAt = Date.now(); s.finishReason = reason || 'manual';
             this.storage.save(s); this.storage.index();
-            this.active = null; this.error = ''; this.automaticFault = false;
             this.history = this.storage.history(); this.interrupted = this.history.filter((t) => t.status !== 'finished');
+            this.active = null; this.error = ''; this.automaticFault = false;
             this.syncAutomatic();
             this.changed(reason === 'engine stopped' ? { type: 'automatic-stop', trip: s } : undefined); return s;
         } catch (e) { s.status = 'interrupted'; this.fail(e); throw e; }

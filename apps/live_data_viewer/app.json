@@ -1,8 +1,8 @@
 {
   "id": "live_data_viewer",
   "title": "Live Data Viewer",
-  "description": "Performance meters, front/rear active anti-roll dynamics, rolling temperatures and eight-cylinder engine-health comparison",
-  "version": "1.7.4",
+  "description": "Performance meters, active anti-roll dynamics, temperatures, engine health and a fixed dual-DME BM3 channel grid",
+  "version": "1.8.0",
   "vendor": "custom",
   "loggingId": "OA9E",
   "iconGlyph": "LIVE",
@@ -76,7 +76,34 @@
     },
     {
       "key": "section", "label": "Initial page", "type": "choice", "default": "driving",
-      "options": [["driving", "Driving"], ["dynamics", "Dynamics"], ["temperatures", "Temperatures"], ["health", "Engine health"]]
+      "options": [["driving", "Driving"], ["dynamics", "Dynamics"], ["temperatures", "Temperatures"], ["health", "Engine health"], ["bm3", "BM3 channels"]]
+    },
+    {
+      "key": "bm3Engine", "label": "BM3 engine family (confirm exact family)", "type": "choice", "default": "unset",
+      "options": [
+        ["unset", "Not selected - BM3 acquisition disabled"],
+        ["N63", "N63"], ["N63T2", "N63T2"], ["N63T3", "N63T3"],
+        ["S63", "S63"], ["S63T4", "S63T4"], ["S63T4-1", "S63T4-1"], ["S63T4-2", "S63T4-2"],
+        ["B36-MEVD1723", "B36-MEVD1723"], ["B38-MEVD1723", "B38-MEVD1723"], ["B38-T0", "B38-T0"],
+        ["B42", "B42"], ["B46", "B46"], ["B48", "B48"], ["B48-MEVD1723", "B48-MEVD1723"], ["B58", "B58"],
+        ["N13", "N13"], ["N20", "N20"], ["N26", "N26"], ["N47", "N47"], ["N55", "N55"], ["N57", "N57"],
+        ["N74T2", "N74T2"], ["S55", "S55"], ["S58", "S58"], ["S58-1", "S58-1"], ["S58-2", "S58-2"]
+      ]
+    },
+    {
+      "key": "bm3TransportNote", "label": "BM3 diagnostic ownership", "type": "text",
+      "default": "Use alone: stop phone BM3, loggers and other diagnostic apps. Temporarily defines F300/F301 with service 2C; no tuning or flash writes. Occupied slots are never overwritten."
+    },
+    {
+      "key": "bm3AccuracyNote", "label": "BM3 availability", "type": "text",
+      "default": "Exact ROM match required independently per DME. Unproven cylinder-correction array elements and injection-end arrays remain --. DME labels are local ECU slots, not a physical-cylinder map."
+    },
+    {
+      "key": "bm3SpeedNote", "label": "BM3 refresh", "type": "text",
+      "default": "Reply-paced grouped reads; getter refresh setting does not apply. Hz measures completed cycles per DME, not display FPS. Stale values expire after 1.5 s. Vehicle speed/accuracy not yet measured."
+    },
+    {
+      "key": "bm3Status", "label": "BM3 acquisition details", "type": "text", "default": "Select an engine family, then open BM3 channels. Forced termination can leave temporary DIDs occupied until ECU diagnostic state resets."
     },
     {
       "key": "refreshMs", "label": "Getter refresh", "type": "number", "unit": "ms", "default": 100,
@@ -95,14 +122,15 @@
       "steps": [60, 180, 600]
     },
     {
-      "key": "categoryOrder", "label": "Category order", "type": "choice", "default": "driving,dynamics,temperatures,health",
+      "key": "categoryOrder", "label": "Category order", "type": "choice", "default": "driving,dynamics,temperatures,health,bm3",
       "options": [
-        ["driving,dynamics,temperatures,health", "Driving / Dynamics / Temperatures / Engine health"],
-        ["driving,dynamics,health,temperatures", "Driving / Dynamics / Engine health / Temperatures"],
-        ["temperatures,driving,dynamics,health", "Temperatures / Driving / Dynamics / Engine health"],
-        ["temperatures,health,driving,dynamics", "Temperatures / Engine health / Driving / Dynamics"],
-        ["health,driving,dynamics,temperatures", "Engine health / Driving / Dynamics / Temperatures"],
-        ["health,temperatures,driving,dynamics", "Engine health / Temperatures / Driving / Dynamics"]
+        ["driving,dynamics,temperatures,health,bm3", "Driving / Dynamics / Temperatures / Engine health / BM3"],
+        ["driving,dynamics,health,temperatures,bm3", "Driving / Dynamics / Engine health / Temperatures / BM3"],
+        ["temperatures,driving,dynamics,health,bm3", "Temperatures / Driving / Dynamics / Engine health / BM3"],
+        ["temperatures,health,driving,dynamics,bm3", "Temperatures / Engine health / Driving / Dynamics / BM3"],
+        ["health,driving,dynamics,temperatures,bm3", "Engine health / Driving / Dynamics / Temperatures / BM3"],
+        ["health,temperatures,driving,dynamics,bm3", "Engine health / Temperatures / Driving / Dynamics / BM3"],
+        ["bm3,driving,dynamics,temperatures,health", "BM3 / Driving / Dynamics / Temperatures / Engine health"]
       ]
     },
     {

@@ -6,8 +6,9 @@ const driving = require('./driving');
 const dynamics = require('./dynamics');
 const temperatures = require('./temperatures');
 const health = require('./health');
+const bm3 = require('./bm3_view');
 
-const titles = { driving: 'Driving', dynamics: 'Dynamics', temperatures: 'Temperatures', health: 'Engine health' };
+const titles = { driving: 'Driving', dynamics: 'Dynamics', temperatures: 'Temperatures', health: 'Engine health', bm3: 'BM3 channels' };
 
 function draw(ctx, vm) {
     const cv = ctx.canvas(1600, 520), model = vm.model;
@@ -26,6 +27,7 @@ function draw(ctx, vm) {
     if (vm.page === 'driving') driving(cv, t, page);
     else if (vm.page === 'dynamics') dynamics(cv, t, page);
     else if (vm.page === 'temperatures') temperatures(cv, t, page);
+    else if (vm.page === 'bm3') bm3(cv, t, page);
     else health(cv, t, page);
 
     if (vm.notice) {

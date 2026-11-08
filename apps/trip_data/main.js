@@ -21,7 +21,7 @@ mgu.run({
         let demo = ctx.settings.get('demo') === 'on' ? new Demo(recorder.settings) : null;
         const state = {
             page: ctx.settings.get('section') || 'trip', saved: null, focus: 0, focusMemory: {}, modal: null, draft: null,
-            history: [], records: [], followAutomatic: true, tablePages: { fuel: 0 }, tableCoverage: { fuel: false, gears: false }, projection: null, projectionId: null,
+            history: [], historyPage: 0, records: [], recordsPage: 0, followAutomatic: true, tablePages: { fuel: 0 }, tableCoverage: { fuel: false, gears: false }, projection: null, projectionId: null,
             graphLoading: false, loadingId: null, graphRequest: 0, notice: '', noticeUntil: 0, usageBytes: null,
             graph: { metric: 'speed', axis: 'time', zoomSeconds: 0, cursorAt: null },
         };
@@ -31,15 +31,6 @@ mgu.run({
             state.page + ':' + (state.saved ? state.saved.id : 'current');
         const tell = (message) => { state.notice = message; state.noticeUntil = Date.now() + 7000; changed(); };
         const action = (id, label, run, enabled, description) => ({ id, label, run, enabled: enabled !== false, description: description || '' });
-        let grabbed = false, rawPosition = null, rawPressed = false, rawDeflection = 0, relayAt = -Infinity, lastSelect = -Infinity;
-        const shown = () => ui.isVisible('MAIN') && (!ui.hasFocus || ui.hasFocus('MAIN'));
-        function syncController() {
-            const next = shown() && !!(ctx.display && ctx.display.active && ctx.display.active('MAIN'));
-            if (next !== grabbed) {
-                grabbed = next; rawPosition = null; rawPressed = false; rawDeflection = 0;
-                if (ctx.controller) ctx.controller.grab(next);
-            }
-        }
         function route(page) {
             state.focusMemory[focusKey()] = state.focus;
             state.page = page;
@@ -48,9 +39,8 @@ mgu.run({
         }
         async function refreshHistory() {
             if (demo) { state.history = [demo.saved]; state.records = V.records(state.history); changed(); return; }
-            const loaded = storage.history().filter((s) => !recorder.active || recorder.active.id !== s.id);
-            const ids = state.history.map((s) => s.id);
-            state.history = ids.map((id) => loaded.find((s) => s.id === id)).filter(Boolean).concat(loaded.filter((s) => !ids.includes(s.id)));
+            state.history = storage.history().filter((s) => !recorder.active || recorder.active.id !== s.id);
+            state.historyPage = Math.min(state.historyPage, Math.max(0, Math.ceil(state.history.length / 4) - 1));
             state.records = V.records(state.history);
             recorder.history = storage.history();
             recorder.interrupted = recorder.history.filter((s) => s.status !== 'finished' && (!recorder.active || s.id !== recorder.active.id));
@@ -96,7 +86,6 @@ mgu.run({
             if (busy) return;
             if (state.modal || state.page === 'edit') { tell('Close this dialog before opening Settings.'); return; }
             state.usageBytes = storage.usage();
-            if (ctx.controller) ctx.controller.grab(false); grabbed = false;
             refreshSettings(); await ui.open('SETTINGS');
         }
         async function exclusive(fn) {
@@ -179,31 +168,12 @@ mgu.run({
         }
         function pageActions() {
             const saved = state.saved, active = recorder.active;
-            if (state.page === 'trip') {
-                if (demo) return [
-                    action('current', 'Current trip', showCurrent),
-                    action('history', 'Trip history', () => openPage('history')),
-                ];
-                if (!saved) return [
-                    action('record', active ? 'Finish trip' : 'Start trip', () => exclusive(active ? finish : start), !!active || !recorder.interrupted.length),
-                    action('menu', 'Page menu', () => route('menu')),
-                    action('history', 'Trip history', () => openPage('history')),
-                ];
-                return [
-                    action('actions', 'Trip actions', () => route('actions')), action('history', 'Trip history', () => openPage('history')),
-                ];
-            }
-            if (state.page === 'history') return state.history.map((s) => action(s.id, s.name, () => showSaved(s))).concat([
-                action('records', 'History records', () => openPage('records')),
-                action('refresh', 'Refresh history', refreshHistory), action('current', 'Current trip', showCurrent), action('menu', 'Page menu', () => route('menu')),
-            ]);
+            if (state.page === 'history') return state.history.map((s) => action(s.id, s.name, () => showSaved(s)));
             if (state.page === 'records') return state.records.map((record) => action(record.id, record.label,
-                () => showSaved(record.trip), !!record.trip, record.detail)).concat([
-                action('history', 'Trip history', () => openPage('history')), action('current', 'Current trip', showCurrent),
-            ]);
+                () => showSaved(record.trip), !!record.trip, record.detail));
             if (state.page === 'menu') return [
                 action('current', 'Current trip', showCurrent, true, active ? 'Recording / ' + V.duration(active.stats.durationMs) : 'Start and review your current drive'),
-                action('history', 'Trip history', () => openPage('history'), true, recorder.interrupted.length ? 'Interrupted trips await recovery' : 'Saved trips, notes and recovery'),
+                action('history', 'Trip history', () => openPage('history'), true, 'Saved trips, notes and recovery'),
                 action('records', 'History records', () => openPage('records'), true, 'Observed speed, elevation, distance and economy records'),
                 action('settings', 'Settings', settings, true, 'Recording detail, units and presentation'),
             ];
@@ -227,34 +197,32 @@ mgu.run({
             if (state.page === 'edit') return keyboard();
             return [];
         }
-        function availableActions() {
-            const actions = pageActions();
-            if (['menu', 'actions', 'edit'].includes(state.page)) return actions;
-            return actions.concat([
-                action('previous', 'Previous page', () => changePage(-1)),
-                action('next', 'Next page', () => changePage(1)),
-                action('settings', 'Settings', settings),
-            ]);
-        }
-        function move(steps) {
-            if (busy) return;
-            if (state.modal) { state.modal.focus = (state.modal.focus + steps % 2 + 2) % 2; changed(); return; }
-            const count = availableActions().length;
-            if (count) state.focus = (state.focus + steps % count + count) % count;
-            changed();
-        }
-        async function select() {
+        function availableActions() { return pageActions(); }
+        async function activate(index) {
             if (busy || Date.now() - lastSelect < 160) return;
             lastSelect = Date.now();
-            const list = state.modal ? state.modal.actions : availableActions(), index = state.modal ? state.modal.focus : state.focus;
+            const list = state.modal ? state.modal.actions : availableActions();
             const chosen = list[index]; if (!chosen) return;
+            if (state.modal) state.modal.focus = index;
+            else state.focus = index;
             if (!chosen.enabled) {
-                tell(state.page === 'records' ? chosen.description || 'No eligible recorded trip for this record.' :
-                    recorder.interrupted.length && !recorder.active ? 'Recover or close interrupted trips in History first.' :
-                        'This action is unavailable for the selected trip.');
+                tell(chosen.description || 'This action is unavailable for the selected trip.');
                 return;
             }
-            await chosen.run(); changed();
+            try { await chosen.run(); }
+            catch (e) { tell(e.message); ctx.log.warn(e); }
+            changed();
+        }
+        let lastSelect = -Infinity;
+        function changeHistoryPage(delta) {
+            const count = Math.max(1, Math.ceil(state.history.length / 4));
+            state.historyPage = Math.max(0, Math.min(count - 1, state.historyPage + delta));
+            state.focus = state.historyPage * 4; changed();
+        }
+        function changeRecordsPage(delta) {
+            const count = Math.max(1, Math.ceil(state.records.length / 2));
+            state.recordsPage = Math.max(0, Math.min(count - 1, state.recordsPage + delta));
+            state.focus = state.recordsPage * 2; changed();
         }
         function back() {
             if (busy) return;
@@ -266,17 +234,25 @@ mgu.run({
             if (state.page === 'menu') return showCurrent();
             route('menu');
         }
-        async function changePage(steps) {
-            if (busy) return;
-            if (state.modal || state.page === 'edit') { back(); return; }
-            const index = pages.indexOf(state.page === 'records' ? 'history' : state.page);
-            await openPage(pages[(index + steps + pages.length) % pages.length]);
-        }
         const bind = (name, fn) => ui.onClick(name, async () => {
             try { await fn(); } catch (e) { tell(e.message); ctx.log.warn(e); }
             if (ui.isVisible('SETTINGS')) refreshSettings();
             changed();
         });
+        bind('BTN_RECORD', () => {
+            if (state.modal || state.page === 'edit') { tell('Close this dialog before changing recording.'); return; }
+            if (demo) { tell('Turn off Demo data in Settings to record a trip.'); return; }
+            return exclusive(recorder.active && recorder.active.status === 'recording' ? finish : start);
+        });
+        bind('BTN_CURRENT', () => {
+            if (!busy && !state.modal && state.page !== 'edit') return showCurrent();
+        });
+        bind('BTN_OPTIONS', () => {
+            if (busy || state.modal || state.page === 'edit') return;
+            route(state.saved && ['trip', 'elevation', 'fuel', 'gears'].includes(state.page) ? 'actions' : 'menu');
+        });
+        bind('BTN_BACK', back);
+        bind('BTN_SETTINGS', settings);
         const labels = {};
         function nativeText(name, value) { if (labels[name] !== value) { labels[name] = value; ui.text(name, value); } }
         function refreshSettings() {
@@ -332,52 +308,17 @@ mgu.run({
                 openPage(pages[index]).catch((e) => tell(e.message));
             }
         });
-        async function raw(v) {
-            if (!grabbed || !shown() || !v) return;
-            if ([15, 'SIGNAL_UNGUELTIG'].includes(v.frontRotaryEncoderPushButton) && [15, 'SIGNAL_UNGUELTIG'].includes(v.frontRotaryEncoderDeflection)) return;
-            const pressed = [1, 2, 'DREHGEBER_KURZ_GEDRUECKT', 'DREHGEBER_LANG_GEDRUECKT'].includes(v.frontRotaryEncoderPushButton);
-            const pos = v.frontRotaryEncoderOperation, deflection = v.frontRotaryEncoderDeflection;
-            if (Number.isInteger(pos) && pos >= 0 && pos < 65535) {
-                if (rawPosition !== null) {
-                    const delta = ((pos - rawPosition + 32768) & 0xffff) - 32768;
-                    if (delta && Math.abs(delta) <= 64) move(Math.max(-16, Math.min(16, delta)));
-                }
-                rawPosition = pos;
-            }
-            const directions = { 1: 'up', 4: 'right', 7: 'down', 10: 'left',
-                NORD_KURZ_GEDRUECKT: 'up', OST_KURZ_GEDRUECKT: 'right', SUED_KURZ_GEDRUECKT: 'down', WEST_KURZ_GEDRUECKT: 'left' };
-            const direction = directions[deflection], previousDirection = rawDeflection;
-            rawDeflection = direction || 0;
-            const previousPressed = rawPressed; rawPressed = pressed;
-            if (direction && direction !== previousDirection) {
-                if (direction === 'left') await back();
-                else if (direction === 'right') await changePage(1);
-                else move(direction === 'up' ? -1 : 1);
-            }
-            if (pressed && !previousPressed) await select();
-        }
-        const safelyRaw = (v) => { Promise.resolve(raw(v)).catch((e) => { tell(e.message); ctx.log.warn(e); }); };
-        if (ctx.controller && ctx.controller.onInput) ctx.controller.onInput((v) => { relayAt = Date.now(); safelyRaw(v); });
-        let controllerWatch = null;
-        const openingController = ctx.signals.watch('de.bmw.infotainment.controlelements.FrontCCU', '1', {
-            statusRotaryEncoderState: (v) => { if (Date.now() - relayAt > 1000) safelyRaw(v); },
-        }, ctx.log);
-        Promise.resolve(openingController).then((watch) => {
-            controllerWatch = watch;
-            if (closed && watch && watch.shutdown) watch.shutdown();
-        }).catch((e) => ctx.log.warn('Controller: ' + e.message));
         ui.onVisible((name, visible) => {
             if (name === 'SETTINGS' && visible) refreshSettings();
-            syncController(); changed();
+            changed();
         });
-        if (ui.onFocus) ui.onFocus(() => { syncController(); changed(); });
+        if (ui.onFocus) ui.onFocus(changed);
+        if (ctx.onLayout) ctx.onLayout(changed);
         const close = () => {
             if (closed) return;
             closed = true; ++state.graphRequest;
-            if (ctx.controller) ctx.controller.grab(false);
             if (loop) loop.stop();
             recorder.close();
-            if (controllerWatch && controllerWatch.shutdown) Promise.resolve(controllerWatch.shutdown()).catch((e) => ctx.log.warn(e));
         };
         if (ctx.app && ctx.app.on) ctx.app.on('shutdown', close);
         process.once('exit', close);
@@ -386,7 +327,6 @@ mgu.run({
         await loadProjection();
         loop = ctx.loop('MAIN', 30, async () => {
             if (closed) return;
-            syncController();
             if (pendingSession && !busy && !state.modal && state.page !== 'edit') {
                 const event = pendingSession; pendingSession = null;
                 await refreshHistory();
@@ -416,8 +356,10 @@ mgu.run({
                 actions, trip, currentTrip: demo ? demo.trip : recorder.active, saved: !!state.saved, focus: state.focus, demo: !!demo,
                 tablePage: state.tablePages[state.page] || 0, tableCoverage: !!state.tableCoverage[state.page], smoothing: recorder.settings.smoothing,
                 live: demo ? demo.live : sources.sample(mono()), speedBands: recorder.settings.speedBands, notice, busy,
+                activate, historyPageSize: 4, changeHistoryPage, changeRecordsPage,
                 projection: trip && state.projectionId === trip.id ? state.projection : null,
             });
+            nativeText('BTN_RECORD', recorder.active && recorder.active.status === 'recording' ? 'Finish trip' : 'Start trip');
             await ui.image('MAIN_GFX', Dashboard.draw(ctx, vm));
         });
         refreshSettings(); changed();
