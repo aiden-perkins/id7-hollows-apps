@@ -1,0 +1,56 @@
+{
+  "id": "pacman",
+  "title": "Pac-Man",
+  "description": "An independent maze chase game with original layouts, four ghosts, power pellets, controller and touch controls, and saved progress",
+  "version": "1.0.0",
+  "vendor": "custom",
+  "loggingId": "OA9F",
+  "maxDiskUsage": 1048576,
+  "signals": {
+    "de.bmw.infotainment.vehicle.Vehicle2": { "statusCarSpeed2": "rs" },
+    "de.bmw.infotainment.controlelements.FrontCCU": { "statusRotaryEncoderState": "rs" }
+  },
+  "screens": [
+    {
+      "name": "MAIN", "kind": "menu", "title": "Pac-Man", "settings": true,
+      "items": [
+        ["button", "BTN_PLAY", "Play"],
+        ["button", "BTN_NEW", "New game"],
+        ["button", "BTN_HELP", "Controls"],
+        ["text3", "MENU_INFO", ""]
+      ]
+    },
+    {
+      "name": "GAME", "kind": "canvas", "title": "Pac-Man", "parent": "MAIN", "graphic": "GAME_GFX",
+      "buttons": [
+        ["BTN_UP", "Up"], ["BTN_LEFT", "Left"], ["BTN_DOWN", "Down"], ["BTN_RIGHT", "Right"],
+        ["BTN_START", "Start"], ["BTN_RESTART", "New game"], ["BTN_PAUSE", "Pause / menu"]
+      ]
+    },
+    {
+      "name": "HELP", "kind": "list", "title": "Pac-Man controls", "parent": "MAIN",
+      "items": [
+        ["text3", "HELP_MOVE", "Tilt the controller or tap an arrow to choose a direction. Turns wait for the next open corridor; choosing the opposite direction reverses immediately."],
+        ["text3", "HELP_KNOB", "Turn the knob to rotate your requested direction left or right. The selected arrow shows the requested turn. Press to start a life, advance a level, or pause active play."],
+        ["text3", "HELP_PELLETS", "Collect every pellet to clear the maze. Small pellets score 10; power pellets score 50. Clearing a maze adds 500 points. The side tunnel joins the left and right edges."],
+        ["text3", "HELP_GHOSTS", "Four ghosts alternate between corner patrols and different chase targets. Power pellets slow active ghosts and let you eat them for 200, 400, 800 and up to 1600 points per ghost."],
+        ["text3", "HELP_LIVES", "A dangerous ghost costs one life. Collected pellets stay cleared after a life is lost. Returning eyes cannot hurt you. Every 10000 points earns an extra life, up to five."],
+        ["text3", "HELP_LEVELS", "Three original maze layouts rotate as levels advance. Speed increases and power time decreases up to a limit. Difficulty changes apply to new games. This is an independent implementation with original graphics."],
+        ["text3", "HELP_PAUSE", "BACK or Pause returns to the menu and saves. Calls, popups, leaving the app and vehicle movement pause play. Resume explicitly when ready; movement resumes after a short ready pause."],
+        ["button", "BTN_HELP_BACK", "Back"]
+      ]
+    },
+    {
+      "name": "NEW_GAME", "kind": "list", "title": "Start a new game?", "parent": "MAIN",
+      "items": [
+        ["text", "NEW_INFO", "Your current saved game will be replaced. Your best score is kept."],
+        ["button", "BTN_NEW_CANCEL", "Keep current game"],
+        ["button", "BTN_NEW_CONFIRM", "Start new game"]
+      ]
+    }
+  ],
+  "settings": [
+    {"key": "parkedOnly", "label": "Parked only (pauses while driving)", "type": "bool", "default": true},
+    {"key": "difficulty", "label": "Difficulty (new game)", "type": "choice", "default": "normal", "options": [["easy", "Easy: slower ghosts, 5 lives"], ["normal", "Normal: 3 lives"], ["hard", "Hard: faster ghosts, 3 lives"]]}
+  ]
+}

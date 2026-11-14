@@ -1,0 +1,81 @@
+{
+  "id": "minesweeper",
+  "title": "Minesweeper",
+  "description": "Minesweeper with safe first reveals, controller and touch controls, flags, three difficulties, and saved progress",
+  "version": "1.0.0",
+  "vendor": "custom",
+  "loggingId": "OA9F",
+  "maxDiskUsage": 1048576,
+  "signals": {
+    "de.bmw.infotainment.vehicle.Vehicle2": {
+      "statusCarSpeed2": "rs"
+    },
+    "de.bmw.infotainment.controlelements.FrontCCU": {
+      "statusRotaryEncoderState": "rs"
+    }
+  },
+  "screens": [
+    {
+      "name": "MAIN",
+      "kind": "menu",
+      "title": "Minesweeper",
+      "settings": true,
+      "items": [
+        ["button", "BTN_PLAY", "Play"],
+        ["button", "BTN_NEW", "New game"],
+        ["button", "BTN_HELP", "Controls"],
+        ["text3", "MENU_INFO", ""]
+      ]
+    },
+    {
+      "name": "GAME",
+      "kind": "canvas",
+      "title": "Minesweeper",
+      "parent": "MAIN",
+      "graphic": "GAME_GFX",
+      "buttons": [
+        ["BTN_UP", "Up"],
+        ["BTN_LEFT", "Left"],
+        ["BTN_DOWN", "Down"],
+        ["BTN_RIGHT", "Right"],
+        ["BTN_REVEAL", "Reveal"],
+        ["BTN_FLAG", "Flag / unflag"],
+        ["BTN_MODE", "Mode: Reveal"],
+        ["BTN_CHORD", "Open around"],
+        ["BTN_RESTART", "New game"],
+        ["BTN_PAUSE", "Pause / menu"]
+      ]
+    },
+    {
+      "name": "HELP",
+      "kind": "list",
+      "title": "Minesweeper controls",
+      "parent": "MAIN",
+      "items": [
+        ["text3", "HELP_CURSOR", "Tilt the controller to move the outlined cell. Hold a tilt to repeat. Turn the knob to choose Reveal, Flag or Open around, then press to apply that action."],
+        ["text3", "HELP_TOUCH", "Tap a board cell to apply the selected mode. The mode button cycles actions. Reveal and Flag buttons always apply their named action to the outlined cell."],
+        ["text3", "HELP_REVEAL", "The first revealed cell and its neighbors contain no mines. Empty areas open automatically. A number counts mines in its eight surrounding cells."],
+        ["text3", "HELP_FLAGS", "Flag suspected mines, then unflag them if needed. Flagged cells cannot be revealed. Flags are limited to the board's mine count. Clear every safe cell to win."],
+        ["text3", "HELP_CHORD", "Open around applies to a revealed number when its neighboring flag count matches the number. It reveals the remaining neighbors. Incorrect flags can cause a mine hit."],
+        ["text3", "HELP_TIME", "The timer starts on the first reveal and counts active play only. Each difficulty keeps its own wins and best completion time. Difficulty changes apply to new games."],
+        ["text3", "HELP_PAUSE", "BACK or Pause returns to the menu and saves. Calls, popups, leaving the app and vehicle movement pause play. Resume explicitly when ready. Parked only is on by default."],
+        ["button", "BTN_HELP_BACK", "Back"]
+      ]
+    },
+    {
+      "name": "NEW_GAME",
+      "kind": "list",
+      "title": "Start a new game?",
+      "parent": "MAIN",
+      "items": [
+        ["text", "NEW_INFO", "Your current saved game will be replaced. Your wins and best times are kept."],
+        ["button", "BTN_NEW_CANCEL", "Keep current game"],
+        ["button", "BTN_NEW_CONFIRM", "Start new game"]
+      ]
+    }
+  ],
+  "settings": [
+    {"key": "parkedOnly", "label": "Parked only (pauses while driving)", "type": "bool", "default": true},
+    {"key": "difficulty", "label": "Difficulty (new game)", "type": "choice", "default": "beginner", "options": [["beginner", "Beginner: 9 x 9, 10 mines"], ["intermediate", "Intermediate: 16 x 16, 40 mines"], ["expert", "Expert: 30 x 16, 99 mines"]]}
+  ]
+}

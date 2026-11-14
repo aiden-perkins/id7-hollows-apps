@@ -73,6 +73,9 @@ class Model {
     record(d, r, now) {
         if (r.decoded.state !== 'live') { this.gap(r); return; }
         r.lastValid = { value: r.decoded.value, unit: r.decoded.unit || '', at: now };
+        if (d.id === 'gForce') {
+            r.lastValid.lateral = r.decoded.lateral; r.lastValid.longitudinal = r.decoded.longitudinal;
+        }
         if (!d.numeric || !Number.isFinite(r.decoded.value)) return;
         const value = r.decoded.value;
         if ((d.id === 'boostFes' || d.id === 'boostDme') && !this.settings.boostSeen.includes(d.id)) {

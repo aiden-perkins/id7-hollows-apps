@@ -93,6 +93,8 @@ func (a *application) run(args []string) error {
 		return a.renderer(args[1:])
 	case "preview":
 		return a.preview(args[1:])
+	case "emu":
+		return a.emu(args[1:])
 	case "render":
 		return a.render(args[1:])
 	case "sdk":
@@ -137,6 +139,8 @@ func (a *application) help() {
 	fmt.Fprintln(a.out, "  kit [--renderer MODE] [APP ...]    Build apps and assemble the car kit")
 	fmt.Fprintln(a.out, "  renderer status|build             Inspect the prebuilt renderer or rebuild it")
 	fmt.Fprintln(a.out, "  preview APP [options]             Capture PNGs, GIFs, or a GPU recording")
+	fmt.Fprintln(a.out, "  emu [APP|all] [options]           Run the live emulator with an app picker")
+	fmt.Fprintln(a.out, "    --port 8077 --bg PATH --no-touch (all apps by default)")
 	fmt.Fprintln(a.out, "  render RECORDING.bin [options]    Replay a GPU recording into images")
 	fmt.Fprintln(a.out, "  sdk extract APP.js [DIRECTORY]    Extract the SDK using Node.js")
 	fmt.Fprintln(a.out, "  signals search|show|check ...     Inspect the local SOME/IP catalog")

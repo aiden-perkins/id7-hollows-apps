@@ -1,0 +1,77 @@
+{
+  "id": "snake",
+  "title": "Snake",
+  "description": "Classic Snake with controller and touch steering, increasing speed, wall-wrap mode, and saved progress",
+  "version": "1.0.0",
+  "vendor": "custom",
+  "loggingId": "OA9F",
+  "maxDiskUsage": 1048576,
+  "signals": {
+    "de.bmw.infotainment.vehicle.Vehicle2": {
+      "statusCarSpeed2": "rs"
+    },
+    "de.bmw.infotainment.controlelements.FrontCCU": {
+      "statusRotaryEncoderState": "rs"
+    }
+  },
+  "screens": [
+    {
+      "name": "MAIN",
+      "kind": "menu",
+      "title": "Snake",
+      "settings": true,
+      "items": [
+        ["button", "BTN_PLAY", "Play"],
+        ["button", "BTN_NEW", "New game"],
+        ["button", "BTN_HELP", "Controls"],
+        ["text3", "MENU_INFO", ""]
+      ]
+    },
+    {
+      "name": "GAME",
+      "kind": "canvas",
+      "title": "Snake",
+      "parent": "MAIN",
+      "graphic": "GAME_GFX",
+      "buttons": [
+        ["BTN_UP", "Up"],
+        ["BTN_LEFT", "Left"],
+        ["BTN_DOWN", "Down"],
+        ["BTN_RIGHT", "Right"],
+        ["BTN_PAUSE", "Pause / menu"]
+      ]
+    },
+    {
+      "name": "HELP",
+      "kind": "list",
+      "title": "Snake controls",
+      "parent": "MAIN",
+      "items": [
+        ["text3", "HELP_STEER", "Tilt the controller up, right, down or left to steer. Touch the direction buttons for the same controls."],
+        ["text3", "HELP_KNOB", "Turn the knob one click to turn left or right relative to your direction of travel. Press the controller to pause and return to the menu."],
+        ["text3", "HELP_TURNS", "Two turns can be queued for quick corners. Only one turn is used per movement step. Direct reversal is ignored; holding a direction does not repeat it."],
+        ["text3", "HELP_RULES", "Eat food to grow and score 10 points. Speed increases every five foods, up to its limit. Avoid your body and solid walls. Fill the entire board to win."],
+        ["text3", "HELP_OPTIONS", "Difficulty and solid or wrap-around edges apply to new games. In wrap mode, leaving one edge brings you back at the opposite edge."],
+        ["text3", "HELP_PAUSE", "BACK or Pause returns to the menu and saves. Calls, popups, leaving the app and vehicle movement pause play. Resume explicitly when ready; there is a short ready period before movement."],
+        ["button", "BTN_HELP_BACK", "Back"]
+      ]
+    },
+    {
+      "name": "NEW_GAME",
+      "kind": "list",
+      "title": "Start a new game?",
+      "parent": "MAIN",
+      "items": [
+        ["text", "NEW_INFO", "Your current saved game will be replaced. Your best score is kept."],
+        ["button", "BTN_NEW_CANCEL", "Keep current game"],
+        ["button", "BTN_NEW_CONFIRM", "Start new game"]
+      ]
+    }
+  ],
+  "settings": [
+    {"key": "parkedOnly", "label": "Parked only (pauses while driving)", "type": "bool", "default": true},
+    {"key": "difficulty", "label": "Difficulty (new game)", "type": "choice", "default": "normal", "options": [["relaxed", "Relaxed"], ["normal", "Normal"], ["fast", "Fast"]]},
+    {"key": "edges", "label": "Board edges (new game)", "type": "choice", "default": "solid", "options": [["solid", "Solid walls"], ["wrap", "Wrap around"]]},
+    {"key": "grid", "label": "Show board grid", "type": "bool", "default": true}
+  ]
+}

@@ -1,0 +1,79 @@
+{
+  "id": "game_2048",
+  "title": "2048",
+  "description": "Slide and merge tiles to reach 2048, with controller and touch controls, undo, and saved progress",
+  "version": "1.0.0",
+  "vendor": "custom",
+  "loggingId": "OA9F",
+  "maxDiskUsage": 1048576,
+  "signals": {
+    "de.bmw.infotainment.vehicle.Vehicle2": {
+      "statusCarSpeed2": "rs"
+    },
+    "de.bmw.infotainment.controlelements.FrontCCU": {
+      "statusRotaryEncoderState": "rs"
+    }
+  },
+  "screens": [
+    {
+      "name": "MAIN",
+      "kind": "menu",
+      "title": "2048",
+      "settings": true,
+      "items": [
+        ["button", "BTN_PLAY", "Play"],
+        ["button", "BTN_NEW", "New game"],
+        ["button", "BTN_HELP", "Controls"],
+        ["text3", "MENU_INFO", ""]
+      ]
+    },
+    {
+      "name": "GAME",
+      "kind": "canvas",
+      "title": "2048",
+      "parent": "MAIN",
+      "graphic": "GAME_GFX",
+      "buttons": [
+        ["BTN_UP", "Up"],
+        ["BTN_LEFT", "Left"],
+        ["BTN_DOWN", "Down"],
+        ["BTN_RIGHT", "Right"],
+        ["BTN_UNDO", "Undo"],
+        ["BTN_CONTINUE", "Keep playing"],
+        ["BTN_RESTART", "New game"],
+        ["BTN_PAUSE", "Pause / menu"]
+      ]
+    },
+    {
+      "name": "HELP",
+      "kind": "list",
+      "title": "2048 controls",
+      "parent": "MAIN",
+      "items": [
+        ["text3", "HELP_MOVE", "Tilt the controller up, right, down or left, or tap an arrow to slide all tiles in that direction. A held tilt makes one move."],
+        ["text3", "HELP_KNOB", "Turn the knob to select a direction, then press to move. The selected arrow is highlighted. BACK or Pause returns to the menu and saves."],
+        ["text3", "HELP_MERGE", "Equal tiles combine into one tile, once per move. The merged value is added to your score. A new 2 or 4 appears only when the board changes."],
+        ["text3", "HELP_UNDO", "Undo restores the position before your last move, including its score and next random tile. It is available once, including after game over. Your best score is kept."],
+        ["text3", "HELP_WIN", "Reach a 2048 tile to win, then choose Keep playing to continue. A full board ends the game only when no adjacent tiles can merge."],
+        ["text3", "HELP_ANIMATION", "One extra direction can be queued during a slide animation. Further moves wait for a new input. Pausing clears that pending input; completed moves stay saved."],
+        ["text3", "HELP_PAUSE", "Calls, popups, leaving the app and vehicle movement pause play. Resume explicitly when ready. Parked only is on by default."],
+        ["button", "BTN_HELP_BACK", "Back"]
+      ]
+    },
+    {
+      "name": "NEW_GAME",
+      "kind": "list",
+      "title": "Start a new game?",
+      "parent": "MAIN",
+      "items": [
+        ["text", "NEW_INFO", "Your current saved game will be replaced. Your best score is kept."],
+        ["button", "BTN_NEW_CANCEL", "Keep current game"],
+        ["button", "BTN_NEW_CONFIRM", "Start new game"]
+      ]
+    }
+  ],
+  "settings": [
+    {"key": "parkedOnly", "label": "Parked only (pauses while driving)", "type": "bool", "default": true},
+    {"key": "animations", "label": "Slide animations", "type": "bool", "default": true}
+  ]
+}

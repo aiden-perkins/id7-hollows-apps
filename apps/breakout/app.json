@@ -1,0 +1,77 @@
+{
+  "id": "breakout",
+  "title": "Breakout",
+  "description": "Breakout with six brick layouts, lives, knob and touch controls, difficulty settings, and saved progress",
+  "version": "1.0.0",
+  "vendor": "custom",
+  "loggingId": "OA9F",
+  "maxDiskUsage": 1048576,
+  "signals": {
+    "de.bmw.infotainment.vehicle.Vehicle2": {
+      "statusCarSpeed2": "rs"
+    },
+    "de.bmw.infotainment.controlelements.FrontCCU": {
+      "statusRotaryEncoderState": "rs"
+    }
+  },
+  "screens": [
+    {
+      "name": "MAIN",
+      "kind": "menu",
+      "title": "Breakout",
+      "settings": true,
+      "items": [
+        ["button", "BTN_PLAY", "Play"],
+        ["button", "BTN_NEW", "New game"],
+        ["button", "BTN_HELP", "Controls"],
+        ["text3", "MENU_INFO", ""]
+      ]
+    },
+    {
+      "name": "GAME",
+      "kind": "canvas",
+      "title": "Breakout",
+      "parent": "MAIN",
+      "graphic": "GAME_GFX",
+      "buttons": [
+        ["BTN_LEFT", "Paddle left"],
+        ["BTN_RIGHT", "Paddle right"],
+        ["BTN_LAUNCH", "Launch"],
+        ["BTN_RESTART", "New game"],
+        ["BTN_PAUSE", "Pause / menu"]
+      ]
+    },
+    {
+      "name": "HELP",
+      "kind": "list",
+      "title": "Breakout controls",
+      "parent": "MAIN",
+      "items": [
+        ["text3", "HELP_MOVE", "Turn the knob clockwise to move right and counterclockwise to move left. Hold the controller tilted left or right for continuous movement."],
+        ["text3", "HELP_TOUCH", "Tap the court where you want your paddle horizontally. The arrow buttons also move it. The paddle stays inside the court."],
+        ["text3", "HELP_LAUNCH", "Press the controller or tap Launch to release the ball. After clearing a level, Next level loads the next layout and launches when you are ready."],
+        ["text3", "HELP_BRICKS", "Clear all bricks to advance. Marks on a brick show its remaining hits when more than one is needed. Paddle edges produce steeper returns, and the ball speeds up as you play."],
+        ["text3", "HELP_SCORE", "A hit earns 10 points times the level; breaking a brick adds another 20 times the level. Clearing a level earns 250 times the level and an extra life, up to five."],
+        ["text3", "HELP_LIVES", "Missing the ball costs one life. Zero lives ends the game. Clear all six levels to win. Difficulty changes paddle width, ball speed and starting lives for a new game."],
+        ["text3", "HELP_PAUSE", "BACK or Pause returns to the menu and saves. Calls, popups, leaving the app and vehicle movement pause play. Resume explicitly when ready; a saved ball has a short ready pause."],
+        ["button", "BTN_HELP_BACK", "Back"]
+      ]
+    },
+    {
+      "name": "NEW_GAME",
+      "kind": "list",
+      "title": "Start a new game?",
+      "parent": "MAIN",
+      "items": [
+        ["text", "NEW_INFO", "Your current saved game will be replaced. Your best score is kept."],
+        ["button", "BTN_NEW_CANCEL", "Keep current game"],
+        ["button", "BTN_NEW_CONFIRM", "Start new game"]
+      ]
+    }
+  ],
+  "settings": [
+    {"key": "parkedOnly", "label": "Parked only (pauses while driving)", "type": "bool", "default": true},
+    {"key": "difficulty", "label": "Difficulty (new game)", "type": "choice", "default": "normal", "options": [["easy", "Easy: wide paddle, 5 lives"], ["normal", "Normal: 3 lives"], ["hard", "Hard: narrow paddle, 3 lives"]]},
+    {"key": "sensitivity", "label": "Knob sensitivity", "type": "choice", "default": "normal", "options": [["fine", "Fine"], ["normal", "Normal"], ["fast", "Fast"]]}
+  ]
+}

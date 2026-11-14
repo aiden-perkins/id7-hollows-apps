@@ -1,7 +1,7 @@
 'use strict';
 const D = require('./definitions');
 const { DiagnosticServices } = require('./diagnostic');
-const dynamicsFast = new Set([
+const drivingFast = new Set([
     'frontAxle', 'rearAxle', 'brakePressure', 'accelerator', 'kickdown',
     'wheelSpeedFLH', 'wheelSpeedFRH', 'wheelSpeedRLH', 'wheelSpeedRRH',
     'swayFrontMotorActual', 'swayRearMotorActual', 'rearTorqueShare',
@@ -43,8 +43,8 @@ class Services {
         this.ids = Array.from(expanded); this.model.activate(this.ids);
         const wanted = {};
         const active = D.definitions.filter((d) => expanded.has(d.id)).map((d) => {
-            if (page !== 'dynamics') return d;
-            if (dynamicsFast.has(d.id)) return Object.assign({}, d, { pollMs: 100, focusedFast: true });
+            if (page !== 'driving') return d;
+            if (drivingFast.has(d.id)) return Object.assign({}, d, { pollMs: 100, focusedFast: true });
             if (d.id === 'parkingBrake') return Object.assign({}, d, { pollMs: 1000 });
             if (/\.TPMS/.test(D.IF[d.source]) || d.field === 'statusNewCurrentUnitsStatusExt') {
                 return Object.assign({}, d, { pollMs: Math.max(5000, d.pollMs || 0) });

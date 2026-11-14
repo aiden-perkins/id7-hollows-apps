@@ -25,6 +25,11 @@
         "file":  "signals.js"
     },
     {
+        "new": "if (this.onCcu && (this.grabbing || !this.own())) this.onCcu(v); else this._ccu(v);",
+        "old": "if (this.onCcu && !this.own()) this.onCcu(v); else this._ccu(v);",
+        "file": "display.js"
+    },
+    {
         "new": "const { drawCredit } = require('./credits');\nconst { swipeTouch, cancelSwipe } = require('./swipe');",
         "old": "const { drawCredit } = require('./credits');",
         "file": "display.js"

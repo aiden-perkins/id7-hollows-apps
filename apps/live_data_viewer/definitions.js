@@ -116,7 +116,7 @@ temperature('chargeAir', 'Charge air / bank 1 sensor 1', 'temperatures', 'Air', 
     notes: 'Upstream Car Vitals F477 byte 1: charge-air temperature bank 1 sensor 1, byte - 40 Celsius. OBD PID77 support bit0 must be set; other bank/sensor bytes are not substituted.' });
 add('cabin', 'Cabin air temperature', 'temperatures', 'Air');
 
-candidate('brakePressure', 'Brake system pressure', 'dynamics', 'Driver inputs', 'diagnostic', 'brakeSystemPressure', 'value', null,
+candidate('brakePressure', 'Brake system pressure', 'driving', 'Driver inputs', 'diagnostic', 'brakeSystemPressure', 'value', null,
     'ISTA IB_G05 / IB_G2X DRUCKSENSOR_LESEN: DSC BRS 0x29, UDS 22 DB29; second big-endian signed 16-bit field / 10 bar. Not master-cylinder pressure or pedal percentage.',
     { instance: 'SystemFunctionsInternalTasuInst1', decoder: 'diagnosticBrake', staleMs: 1500, pollMs: 50,
         diag: { target: 0x29, sid: 0x22, did: 0xDB29, at: 2, bytes: 2, signed: true, minBytes: 4 } });
@@ -124,13 +124,13 @@ candidate('steering', 'Steering wheel angle', 'sources', 'Driver inputs', 'steer
     'BMW SDK steeringAngleConverter: raw * 0.04395 - 1440.11 degrees, valid raw 3-65532. Only explicitly valid catalog qualifiers are accepted.',
     { decoder: 'steeringAngle', qualifier: 'qualifierActualValueSteeringAngleDriver', validQualifiers: qualifierEnums.steering });
 diagnostic('frontAxle', 'Front axle effective steering angle', 'sources', 'Driver inputs', 0x12, 0x58C6, 0, 2, {
-    unit: 'deg', scale: 0.00274658, offset: -89.99725342, pollMs: 100, pages: ['dynamics'],
+    unit: 'deg', scale: 0.00274658, offset: -89.99725342, pollMs: 100, pages: ['driving'],
     notes: 'ISTA DME8FF_R SG_FUNKTIONEN STG_STATUS_LENKWV_IST: actual front-axle steering angle, unsigned BE16 * 0.00274658 - 89.99725342 degrees. No qualifier or reserved raw range is documented in this diagnostic row. No assumed steering-wheel ratio or individual wheel toe geometry.' });
 diagnostic('rearAxle', 'Rear axle actual steering angle', 'sources', 'Driver inputs', 0x2B, 0xDB33, 0, 2, {
-    unit: 'deg', scale: 0.002747, offset: -90, pollMs: 100, pages: ['dynamics'],
+    unit: 'deg', scale: 0.002747, offset: -90, pollMs: 100, pages: ['driving'],
     diag: { minBytes: 11, validAt: 2, validValues: [1] },
     notes: 'ISTA HSR_G11 RES_0XDB33_D: actual rear-actuator angle BE16 * 0.002747 - 90 degrees, qualifier at byte 2 must equal 1 (valid); 8 initializing and 6 invalid are not angles. Not individually measured wheel toe.' });
-candidate('accelerator', 'Accelerator pedal position', 'dynamics', 'Driver inputs', 'diagnostic', 'acceleratorPosition', 'value', null,
+candidate('accelerator', 'Accelerator pedal position', 'driving', 'Driver inputs', 'diagnostic', 'acceleratorPosition', 'value', null,
     'ISTA DME8FF_R for DME-88T0 N63TU3: IFPWG, UDS 22 480B, normalized pedal position; big-endian signed 16-bit * 0.01220703 percent. Only the physical 0-100 percent range is displayed.',
     { instance: 'SystemFunctionsInternalTasuInst1', decoder: 'diagnosticPedal', staleMs: 1500, pollMs: 50,
         diag: { target: 0x12, sid: 0x22, did: 0x480B, at: 0, bytes: 2, signed: true, minBytes: 2 } });
@@ -140,10 +140,10 @@ add('traction', 'Traction / DSC mode', 'sources', 'Drivetrain', { source: 'mode'
     member: 'displayStatusDSC2', read: true, decoder: 'traction',
     notes: 'Catalog-defined DSC display state. Provider availability on this car is unconfirmed. Independent of driving mode; invalid/reserved codes are rejected.' });
 add('parkingBrake', 'Parking brake', 'sources', 'Driver inputs', { source: 'speed', field: 'statusStandstillFunctions',
-    member: 'statusParkingBrake', read: true, decoder: 'parkingBrake', staleMs: 2000, pages: ['dynamics'],
+    member: 'statusParkingBrake', read: true, decoder: 'parkingBrake', staleMs: 2000, pages: ['driving'],
     notes: 'BMW SDK AttributeMapping/TypeConverters uses Vehicle2.statusStandstillFunctions.statusParkingBrake: 0 mechanically released, 1 mechanically locked, 2 releasing, 4 locking. CDS statusHandBrake describes the mechanical handbrake contact, not this electric parking brake.' });
 diagnostic('kickdown', 'Accelerator kickdown detection', 'sources', 'Driver inputs', 0x12, 0x4007, 0, 1, {
-    decoder: 'binary', numeric: false, labels: ['RELEASED', 'ENGAGED'], pollMs: 100, staleMs: 2000, pages: ['dynamics'],
+    decoder: 'binary', numeric: false, labels: ['RELEASED', 'ENGAGED'], pollMs: 100, staleMs: 2000, pages: ['driving'],
     diag: { mask: 0x04, shift: 2, minBytes: 2 },
     notes: 'Actual car DME8FF_R DIGITAL_0 / RES_0X4007_D: two status bytes; BF_0X4007_0 STAT_KICKDOWN is bit 0x04 of byte 0, 0=not detected / 1=detected. Source table offsets 4683490 / 3502521. Replaces nonworking EGS DA1F; actual EGS7 maps to GSZFBCE, whose DA1F is also BE16, so relabelling the EGS variant would not fix the source. Never inferred from pedal percentage.' });
 diagnostic('brakePedal', 'Brake pedal switch', 'sources', 'Driver inputs', 0x29, 0xD9EF, 0, 1, {
@@ -188,7 +188,7 @@ candidate('gLong', 'Longitudinal acceleration', 'sources', 'Motion', 'accel', 's
     'BMW M Laptimer longitudinal acceleration: raw * 0.002 - 65 m/s², divided by standard gravity (9.80665) for g.', { decoder: 'acceleration' });
 candidate('gLat', 'Lateral acceleration', 'sources', 'Motion', 'accel', 'statusLateralAccelerationMassCenter', 'lateralAccelerationCentreOfGravity', 65535,
     'BMW M Laptimer lateral acceleration: raw * 0.002 - 65 m/s², divided by standard gravity (9.80665) for g.', { decoder: 'acceleration' });
-add('gForce', 'Combined acceleration', 'dynamics', 'Motion', { kind: 'derived', numeric: true, unit: 'g',
+add('gForce', 'Combined acceleration', 'driving', 'Motion', { kind: 'derived', numeric: true, unit: 'g',
     dependsOn: ['gLat', 'gLong'], maxSkewMs: 1000, staleMs: 2000,
     notes: 'Magnitude of lateral and longitudinal acceleration in g; inputs must each be at most 2 seconds old and within 1 second by local arrival time. Session maximum uses the combined samples, not separate axis peaks.' });
 candidate('voltage', 'Battery voltage (IBS)', 'driving', 'Electrical', 'diagnostic', 'batteryVoltage', 'value', null,
@@ -223,7 +223,7 @@ candidate('tyreTemperatureUnit', 'Reported tire temperature unit', 'sources', 'T
         add(item[0] + wheel, item[1], 'sources', group, Object.assign({}, common, {
             kind: 'derived', numeric: true, unit: temperature ? 'F' : 'psi', tpmsMeasure: item[4],
             dependsOn: [rawId, temperature ? 'tyreTemperatureUnit' : 'tyrePressureUnit'],
-            pages: item[4] === 'target' ? undefined : ['dynamics'],
+            pages: item[4] === 'target' ? undefined : ['driving'],
             notes: 'TPMS normalized using the reported vehicle unit, displayed in ' + (temperature ? 'degrees F' : 'psi') +
                 '. Requires an explicit supported unit; accepted range ' +
                 (temperature ? '-40 to 150 degrees C.' : item[4] === 'target' ? '1-6 bar (target).' : '0.5-6 bar (actual).'),
@@ -235,19 +235,19 @@ candidate('tyreTemperatureUnit', 'Reported tire temperature unit', 'sources', 'T
 ['FLH', 'FRH', 'RLH', 'RRH'].forEach((wheel, index) => {
     const diag = { minBytes: 19, qualityAt: 15 + index };
     diagnostic('wheelSpeed' + wheel, 'Wheel speed ' + wheel, 'sources', 'Motion', 0x29, 0xDBE4, index * 2, 2, {
-        unit: 'mph', scale: 0.01 / 1.609344, pollMs: 100, staleMs: 2000, pages: ['dynamics'],
+        unit: 'mph', scale: 0.01 / 1.609344, pollMs: 100, staleMs: 2000, pages: ['driving'],
         diag: Object.assign({ signed: true }, diag),
         notes: 'ISTA IB_G05 RES_0XDBE4_D: wheel-specific signed BE16 / 100 km/h, converted to mph. Own signal quality must be >50% and <=100%. Direction is independently reported, not inferred from gear or speed.' });
     diagnostic('wheelDirection' + wheel, 'Wheel direction ' + wheel, 'sources', 'Motion', 0x29, 0xDBE4, 10 + index, 1, {
         decoder: 'wheelDirection', numeric: false, pollMs: 100, staleMs: 2000, diag,
         notes: 'ISTA IB_G05 TAB_DREHRICHTUNG: 0 standstill, 1 forward, 2 reverse; 3 undefined remains unavailable. Own wheel quality must be >50% and <=100%.' });
 });
-candidate('rearTorqueShare', 'Rear axle torque share', 'dynamics', 'Drivetrain', 'thermal', 'basicDataSet',
+candidate('rearTorqueShare', 'Rear axle torque share', 'driving', 'Drivetrain', 'thermal', 'basicDataSet',
     'valueDistributionLongitudinalTorqueRearAxisFrontAxis', 65535,
     'Saved Car Vitals config.torqueSplitRear: raw * 0.01 percent toward the rear axle; front is 100 minus rear. Reuses the upstream scale/convention, not independently calibrated axle power. Requires a documented valid qualifier; no DB32, clutch-position or drive-mode estimate is substituted.',
     { read: false, decoder: 'torqueShareRear', qualifier: 'qualifierValueDistributionLongitudinalTorqueRearAxisFrontAxis',
         validQualifiers: { 2: 'SIGNALWERT_IST_GUELTIG', 10: 'SIGNALWERT_IST_GUELTIG__REKALIBRIERUNGSBEDARF' } });
-['frontPower', 'rearPower'].forEach((id, index) => add(id, (index ? 'Rear' : 'Front') + ' axle power (estimated)', 'dynamics', 'Drivetrain', {
+['frontPower', 'rearPower'].forEach((id, index) => add(id, (index ? 'Rear' : 'Front') + ' axle power (estimated)', 'driving', 'Drivetrain', {
     kind: 'derived', numeric: true, unit: 'hp', dependsOn: ['horsepower', 'rearTorqueShare'], staleMs: 2000, maxSkewMs: 1000,
     notes: 'Estimated crankshaft horsepower allocated using the reported BasicDataSet front/rear torque share. Assumes equal axle speeds and ignores drivetrain losses; not measured delivered axle or wheel horsepower. Both inputs must be live, at most 2 seconds old and delivered within 1 second. No DB32, clutch-position or drive-mode split estimate is substituted.' }));
 ['Right', 'Left'].forEach((side, index) => {
@@ -284,7 +284,7 @@ add('exhaust', 'Exhaust electrical output (both DMEs)', 'driving', 'Exhaust', { 
         unit: 'A', scale: 1 / 150, diag: { signed: true, exactBytes: 6 }, pollMs: 1000,
         notes: provenance + 'RES_0XD69B STAT_PHASENSTROM_RMS_WERT: signed BE16 / 150 A. Effective motor phase current, not battery current or engagement percentage. No qualifier/sentinel specified; zero alone does not mean anti-roll off.' });
     [['MotorTarget', 'requested motor torque', 0], ['MotorActual', 'actual motor torque', 2]].forEach(([suffix, label, at]) =>
-        diagnostic(prefix + suffix, axle + ' anti-roll ' + label, suffix === 'MotorActual' ? 'dynamics' : 'sources', 'Active anti-roll', target, 0xD69A, at, 2, {
+        diagnostic(prefix + suffix, axle + ' anti-roll ' + label, suffix === 'MotorActual' ? 'driving' : 'sources', 'Active anti-roll', target, 0xD69A, at, 2, {
             unit: 'Nm', scale: 1 / 3276, diag: { signed: true, exactBytes: 4 }, pollMs: 1000,
             notes: provenance + 'RES_0XD69A: signed BE16 / 3276 Nm, requested/actual electric motor torque from the same reply. Not D699 actuator torque or D6BB stabilizer torque; no guessed gear-ratio conversion.' }));
     diagnostic(prefix + 'Status', axle + ' anti-roll controller status', 'sources', 'Active anti-roll', target, 0xD6BB, 10, 1, {

@@ -8,6 +8,7 @@ const catalog = require('./bm3_catalog');
 // Ordinary values are BE (18103ef20); RAM uses cm.bigEndian (18103e5a0).
 // This is a new scheduler, not the legacy viewer's scalar polling policy.
 const DEADLINE_MS = 1200, FRESH_MS = 1500;
+const POLL_RETRY_MS = 250, MAX_POLL_RETRIES = 3;
 const normalize = (s) => String(s || '').replace(/\s+/g, ' ').trim().toLowerCase();
 const word = (n) => [Math.floor(n / 256) & 255, n & 255];
 const address = (n) => [Math.floor(n / 16777216) & 255, Math.floor(n / 65536) & 255,
@@ -19,6 +20,9 @@ function deadline(promise, ms, label) {
     })]).then((v) => { clearTimeout(timer); return v; }, (e) => { clearTimeout(timer); throw e; });
 }
 function positive(u) { return u && u[0] !== 0x7F; }
+function retryable(error) {
+    return error.nrc === 0x21 || /TEMPORARILY_NOT_ACCEPTED|BUSY|TIMED OUT|TIMEOUT/i.test(error.message || '');
+}
 function checked(u, length) {
     if (!u) throw new Error('Diagnostic response timed out');
     if (!positive(u)) {
@@ -61,9 +65,10 @@ function displayValue(value, entry, ambient) {
     }
     if (output === 'F') return ['C', '°C', '° C'].includes(unit) ? value * 9 / 5 + 32 : unit === 'F' ? value : NaN;
     if (output === 'mph') return unit === 'km/h' ? value * 0.621371 : unit === 'mph' ? value : NaN;
-    if (output === '1/min') return ['rpm', '1/min'].includes(unit) ? value : NaN;
+    if (output === 'rpm' || output === '1/min') return ['rpm', '1/min'].includes(unit) ? value : NaN;
     if (output === 'deg') return ['deg', '°'].includes(unit) ? value : NaN;
-    if (output === 'degKW') return ['Grad KW', '°KW'].includes(unit) ? value : NaN;
+    if (output === 'deg KW' || output === 'degKW')
+        return ['deg KW', 'degKW', 'Grad KW', '°KW', '° KW'].includes(unit) ? value : NaN;
     if (output === '-' && unit === '') return value;
     return unit === output ? value : NaN;
 }
@@ -72,7 +77,7 @@ class Bm3Feed {
     constructor(ctx, changed) {
         this.ctx = ctx; this.changed = changed; this.run = null; this.task = null;
         this.banks = [0x12, 0x13].map((target) => ({ target, samples: {}, reasons: {}, groups: [],
-            status: 'Inactive', hz: 0, arrivals: [], lastCycle: 0, rom: null }));
+            status: 'Inactive', hz: 0, arrivals: [], lastCycle: 0, rom: null, failures: 0, retryAt: 0 }));
     }
     start(engine) {
         if (this.task) throw new Error('Previous BM3 acquisition has not drained');
@@ -80,13 +85,16 @@ class Bm3Feed {
             diag: null, proxy: null, pending: null, engine };
         this.run = run;
         this.banks.forEach((bank) => Object.assign(bank, { samples: {}, reasons: {}, groups: [],
-            status: 'Connecting', hz: 0, arrivals: [], lastCycle: 0, rom: null, ambient: null }));
-        this.task = this._run(run).catch((error) => {
-            if (run.active) this.banks.forEach((bank) => { bank.status = error.message; bank.samples = {}; bank.hz = 0; });
-            this._notify();
-        }).finally(() => {
-            run.active = false; this._dispose(run); this.task = null; this.changed();
-        });
+            status: 'Connecting', hz: 0, arrivals: [], lastCycle: 0, rom: null, ambient: null, failures: 0, retryAt: 0 }));
+        this.task = (async () => {
+            try { await this._run(run); }
+            catch (error) {
+                if (run.active) this.banks.forEach((bank) => { bank.status = error.message; bank.samples = {}; bank.hz = 0; });
+                this._notify();
+            } finally {
+                run.active = false; this._dispose(run); this.task = null; this.changed();
+            }
+        })();
         this.changed();
     }
     async stop() {
@@ -305,19 +313,39 @@ class Bm3Feed {
                     }
                 }
                 const count = bank.groups.reduce((n, group) => n + group.entries.length, 0);
-                bank.status = (bank.rom ? 'ROM ' + bank.rom + ' / ' : '') + count + '/44 defined';
+                bank.readyStatus = (bank.rom ? 'ROM ' + bank.rom + ' / ' : '') + count + '/44 defined';
+                bank.status = bank.readyStatus;
                 this._notify();
             }
             while (run.active && this.banks.some((bank) => bank.groups.length)) {
                 for (const bank of this.banks) {
                     if (!run.active) return;
-                    if (!bank.groups.length) continue;
-                    try { await this._poll(run, bank); }
+                    if (!bank.groups.length || Date.now() < bank.retryAt) continue;
+                    try {
+                        await this._poll(run, bank);
+                        const recovered = bank.failures > 0;
+                        bank.failures = 0; bank.retryAt = 0;
+                        if (recovered) { bank.status = bank.readyStatus; this._notify(); }
+                    }
                     catch (error) {
-                        bank.samples = {}; bank.hz = 0; bank.groups = []; bank.status = error.message;
-                        await this._cleanup(run, bank.target); this._notify();
+                        if (!run.active || run.lost) return;
+                        bank.samples = {}; bank.hz = 0; bank.arrivals = []; bank.lastCycle = 0; bank.ambient = null;
+                        if (retryable(error) && bank.failures < MAX_POLL_RETRIES) {
+                            bank.failures++;
+                            bank.retryAt = Date.now() + POLL_RETRY_MS * bank.failures;
+                            bank.status = error.message + '; retry ' + bank.failures + '/' + MAX_POLL_RETRIES;
+                        } else {
+                            bank.groups = []; bank.status = error.message;
+                            await this._cleanup(run, bank.target);
+                        }
+                        this._notify();
                     }
                 }
+                // Back off failed DMEs independently, without holding up a healthy DME.
+                const next = this.banks.filter((bank) => bank.groups.length).map((bank) => bank.retryAt);
+                const waitMs = Math.min.apply(null, next) - Date.now();
+                if (run.active && next.length && waitMs > 0)
+                    await new Promise((resolve) => setTimeout(resolve, waitMs));
             }
         } finally {
             await this._cleanup(run);

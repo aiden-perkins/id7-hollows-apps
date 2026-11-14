@@ -168,4 +168,4 @@ function plot(cv, t, vm, box, series, options) {
     text(cv, '-' + seconds + 's', left, y + h - 9, traceWidth / 2, 13, t.dim);
     text(cv, 'NOW' + (unit ? ' / ' + unit : ''), left + traceWidth, y + h - 9, traceWidth / 2 - 4, 13, t.dim, { align: 'right' });
 }
-module.exports = { C, palette, text, get, numeric, fmt, ink, plot };
+module.exports = { C, palette, text, get, calibrated, numeric, fmt, ink, plot };

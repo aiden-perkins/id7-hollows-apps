@@ -1,8 +1,8 @@
 {
   "id": "live_data_viewer",
   "title": "Live Data Viewer",
-  "description": "Performance meters, active anti-roll dynamics, temperatures, engine health and a fixed dual-DME BM3 channel grid",
-  "version": "1.8.0",
+  "description": "Driving dynamics and performance, temperatures, engine health and a fixed dual-DME BM3 channel grid",
+  "version": "1.9.0",
   "vendor": "custom",
   "loggingId": "OA9E",
   "iconGlyph": "LIVE",
@@ -76,7 +76,7 @@
     },
     {
       "key": "section", "label": "Initial page", "type": "choice", "default": "driving",
-      "options": [["driving", "Driving"], ["dynamics", "Dynamics"], ["temperatures", "Temperatures"], ["health", "Engine health"], ["bm3", "BM3 channels"]]
+      "options": [["driving", "Driving"], ["temperatures", "Temperatures"], ["health", "Engine health"], ["bm3", "BM3 channels"]]
     },
     {
       "key": "bm3Engine", "label": "BM3 engine family (confirm exact family)", "type": "choice", "default": "unset",
@@ -122,24 +122,24 @@
       "steps": [60, 180, 600]
     },
     {
-      "key": "categoryOrder", "label": "Category order", "type": "choice", "default": "driving,dynamics,temperatures,health,bm3",
+      "key": "categoryOrder", "label": "Category order", "type": "choice", "default": "driving,temperatures,health,bm3",
       "options": [
-        ["driving,dynamics,temperatures,health,bm3", "Driving / Dynamics / Temperatures / Engine health / BM3"],
-        ["driving,dynamics,health,temperatures,bm3", "Driving / Dynamics / Engine health / Temperatures / BM3"],
-        ["temperatures,driving,dynamics,health,bm3", "Temperatures / Driving / Dynamics / Engine health / BM3"],
-        ["temperatures,health,driving,dynamics,bm3", "Temperatures / Engine health / Driving / Dynamics / BM3"],
-        ["health,driving,dynamics,temperatures,bm3", "Engine health / Driving / Dynamics / Temperatures / BM3"],
-        ["health,temperatures,driving,dynamics,bm3", "Engine health / Temperatures / Driving / Dynamics / BM3"],
-        ["bm3,driving,dynamics,temperatures,health", "BM3 / Driving / Dynamics / Temperatures / Engine health"]
+        ["driving,temperatures,health,bm3", "Driving / Temperatures / Engine health / BM3"],
+        ["driving,health,temperatures,bm3", "Driving / Engine health / Temperatures / BM3"],
+        ["temperatures,driving,health,bm3", "Temperatures / Driving / Engine health / BM3"],
+        ["temperatures,health,driving,bm3", "Temperatures / Engine health / Driving / BM3"],
+        ["health,driving,temperatures,bm3", "Engine health / Driving / Temperatures / BM3"],
+        ["health,temperatures,driving,bm3", "Engine health / Temperatures / Driving / BM3"],
+        ["bm3,driving,temperatures,health", "BM3 / Driving / Temperatures / Engine health"]
       ]
     },
     {
       "key": "displayNote", "label": "Display", "type": "text",
-      "default": "Up to 60 FPS; US units; fuel L then G, two decimals"
+      "default": "Up to 60 FPS; US units; total fuel in US gallons and percent; current battery voltage"
     },
     {
       "key": "fuelNote", "label": "Fuel percentage", "type": "text",
-      "default": "Total litres / nominal 68 L M850i tank; graphical reference, not ECU-reported capacity"
+      "default": "Total US gallons / 18 G; display reference, not ECU-reported capacity"
     },
     {
       "key": "samplingNote", "label": "Sampling", "type": "text",
@@ -147,7 +147,7 @@
     },
     {
       "key": "pedalNote", "label": "Pedals", "type": "text",
-      "default": "50 ms target; ECU latency and shared queue limit replies"
+      "default": "100 ms target on Driving; ECU latency and shared queue limit replies"
     },
     {
       "key": "brakeNote", "label": "Brake", "type": "text",

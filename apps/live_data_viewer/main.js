@@ -12,7 +12,9 @@ mgu.run({
     async start(ctx) {
         const ui = ctx.ui, storage = new Storage(ctx.dataDir);
         let closed = false, loop = null, dirty = true, immediate = true, lastDraw = 0, activeKey = '';
-        const state = { page: ctx.settings.get('section') || 'driving', exhaustMode: null, notice: '', noticeUntil: 0 };
+        const section = ctx.settings.get('section') || 'driving';
+        const state = { page: section === 'dynamics' ? 'driving' : section, exhaustMode: null, notice: '', noticeUntil: 0 };
+        ctx.settings.values.section = state.page;
         const changed = () => { dirty = true; if (loop) loop.kick(); };
         const model = new Model(storage, changed, (error) => { tell(error.message); ctx.log.warn(error); });
         Object.assign(ctx.settings.values, model.settings, { categoryOrder: model.settings.order.join(',') });
@@ -118,12 +120,14 @@ mgu.run({
         });
         if (ui.onFocus) ui.onFocus(() => { if (!closed) { collect(); immediate = true; changed(); } });
         if (ctx.onLayout) ctx.onLayout(() => { if (!closed) { immediate = true; changed(); } });
-        const close = () => {
+        const close = async () => {
             if (closed) return;
             closed = true; collectionGeneration++;
             if (loop) loop.stop();
             if (services) services.activate([], false, state.page);
-            bm3.stop().catch((e) => ctx.log.warn(e)).finally(() => { if (services) services.close(); });
+            try { await bm3.stop(); }
+            catch (e) { ctx.log.warn(e); }
+            finally { if (services) services.close(); }
         };
         if (ctx.app && ctx.app.on) ctx.app.on('shutdown', close);
         process.once('exit', close);

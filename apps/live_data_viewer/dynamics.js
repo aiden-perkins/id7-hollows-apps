@@ -1,22 +1,32 @@
 'use strict';
-const { C, text, get, numeric, fmt } = require('./instruments');
+const { C, text, get, calibrated, fmt } = require('./instruments');
 
 // Fixed display references only, not measured mechanical limits.
 const MOTOR_TORQUE_FULL_SCALE_NM = 10;
-const WHEEL_OFFSET = 260, WHEEL_HALF_WIDTH = 42, WHEEL_HALF_HEIGHT = 68;
-const POWER_BOX_HALF_WIDTH = 58;
+const WHEEL_OFFSET = 180, WHEEL_HALF_WIDTH = 30, WHEEL_HALF_HEIGHT = 52;
+const POWER_BOX_HALF_WIDTH = 52;
 const G_TRAIL_MS = 10000;
 const wheelFields = [
     { prefix: 'pressure', unit: 'psi', label: 'PSI', places: 0 },
     { prefix: 'tyreTemp', unit: 'F', label: 'F', places: 0 },
     { prefix: 'wheelSpeed', unit: 'mph', label: 'MPH', places: 1 },
 ];
-function physical(vm, id, unit) {
+function reading(vm, id) {
     const state = get(vm, id);
-    return vm.model.definitions[id].unit === unit && state.state === 'live' && !state.retained ? numeric(vm, id) : null;
+    const live = state.state === 'live' && !state.retained;
+    // Keep the last validated sample visible without promoting it to live data.
+    return { sample: live ? state : vm.model.readings[id].lastValid, live };
 }
-function gMeter(cv, t, vm, cy) {
-    const cx = 160, radius = 126, now = Date.now(), cutoff = now - G_TRAIL_MS;
+function physical(vm, id, unit) {
+    const definition = vm.model.definitions[id], current = reading(vm, id), sample = current.sample;
+    const value = calibrated(definition) && definition.unit === unit && sample &&
+        sample.unit === unit && Number.isFinite(sample.value) ? sample.value : null;
+    return { value, live: current.live && value !== null };
+}
+function gMeter(cv, t, vm, box) {
+    const cx = box.x + box.w / 2, cy = box.y + box.h / 2;
+    const radius = Math.min(108, (box.w - 32) / 2, (box.h - 140) / 2);
+    const now = Date.now(), cutoff = now - G_TRAIL_MS;
     cv.line(cx - radius - 4, cy, cx + radius + 4, cy, 1, t.track);
     cv.line(cx, cy - radius - 4, cx, cy + radius + 4, 1, t.track);
     [0.5, 1, 1.5].forEach((value) => {
@@ -43,9 +53,13 @@ function gMeter(cv, t, vm, cy) {
     }
     const force = physical(vm, 'gForce', 'g');
     const lateral = physical(vm, 'gLat', 'g'), longitudinal = physical(vm, 'gLong', 'g');
-    if (force !== null && lateral !== null && longitudinal !== null) {
-        const scale = radius / Math.max(1.5, force);
-        cv.circle(cx - lateral * scale, cy - longitudinal * scale, 7, C.cyan);
+    const live = force.live && lateral.live && longitudinal.live;
+    // A held marker uses one combined sample rather than mixing old and fresh axes.
+    const point = live ? { value: force.value, lateral: lateral.value, longitudinal: longitudinal.value } :
+        vm.model.readings.gForce.lastValid;
+    if (point && Number.isFinite(point.value) && Number.isFinite(point.lateral) && Number.isFinite(point.longitudinal)) {
+        const scale = radius / Math.max(1.5, point.value);
+        cv.circle(cx - point.lateral * scale, cy - point.longitudinal * scale, 7, live ? C.cyan : t.dim);
     }
     const peaks = ['gLat', 'gLong'].map((id) => {
         const reading = vm.model.readings[id];
@@ -53,42 +67,17 @@ function gMeter(cv, t, vm, cy) {
             Math.max(Math.abs(reading.min), Math.abs(reading.max)) : null, 1).replace(/\.0$/, '');
     });
     text(cv, 'Lat ' + peaks[0] + 'G | Long ' + peaks[1] + 'G', cx, cy + radius + 26,
-        280, 20, t.text, { align: 'center', font: 'num' });
+        box.w, 18, t.text, { align: 'center', font: 'num' });
 }
-function pedalStatus(cv, t, vm, id, title, cx, y) {
-    const state = get(vm, id), value = state.state === 'live' && !state.retained ? state.value : null;
+function pedalStatus(cv, t, vm, id, title, cx, y, width) {
+    const current = reading(vm, id), value = current.sample ? current.sample.value : null;
     const active = value === 'APPLIED' || value === 'ENGAGED';
     const changing = value === 'LOCKING' || value === 'RELEASING';
-    const color = changing ? C.amber : active ? id === 'parkingBrake' ? C.red : C.blue : t.dim;
-    cv.roundRect(cx - 68, y, 136, 32, 6, active || changing ? color + '20' : t.panelTop);
-    cv.strokeRoundRect(cx - 68, y, 136, 32, 6, 1.5, color);
-    text(cv, title, cx, y + 12, 124, 11, t.text, { align: 'center', font: 'bold' });
-    text(cv, value || '--', cx, y + 26, 124, 11, color, { align: 'center', font: 'bold' });
-}
-function pedals(cv, t, vm) {
-    const top = vm.contentTop + 98, bottom = vm.contentBottom - 46, width = 64;
-    [['brakePressure', 'BRAKE', 1360, 84, 'bar'], ['accelerator', 'ACCELERATOR', 1520, 100, '%']].forEach((field) => {
-        const [id, title, cx, fullScale, unit] = field, x = cx - width / 2;
-        const value = physical(vm, id, unit), color = value === null ? t.dim : C.cyan;
-        const shown = fmt(value, id === 'accelerator' ? 0 : 1) + ' ' + unit;
-        const options = { align: 'center', font: 'num' };
-        const size = Math.min(28, 28 * 136 / Math.max(1, cv.textWidth(shown, 28, options)));
-        text(cv, title, cx, vm.contentTop + 36, 136, 16, t.dim, { align: 'center', font: 'bold' });
-        text(cv, shown, cx, vm.contentTop + 72, 136, size, color, options);
-        cv.roundRect(x, top, width, bottom - top, 6, t.track);
-        if (value !== null) {
-            const height = (bottom - top - 6) * Math.max(0, Math.min(1, value / fullScale));
-            if (height > 0) cv.roundRect(x + 3, bottom - 3 - height, width - 6, height, Math.min(4, height / 2), color);
-        }
-        cv.strokeRoundRect(x, top, width, bottom - top, 6, 2, t.tick);
-        [0, fullScale].forEach((limit) => {
-            const y = limit === 0 ? bottom : top;
-            cv.line(x + width + 4, y, x + width + 10, y, 1, t.tick);
-            text(cv, String(limit), x + width + 12, y + 5, 32, 13, t.dim, { font: 'num' });
-        });
-    });
-    pedalStatus(cv, t, vm, 'parkingBrake', 'PARKING BRAKE', 1360, bottom + 12);
-    pedalStatus(cv, t, vm, 'kickdown', 'KICKDOWN', 1520, bottom + 12);
+    const color = !current.live ? t.dim : changing ? C.amber : active ? id === 'parkingBrake' ? C.red : C.blue : t.dim;
+    cv.roundRect(cx - width / 2, y, width, 32, 6, active || changing ? color + '20' : t.panelTop);
+    cv.strokeRoundRect(cx - width / 2, y, width, 32, 6, 1.5, color);
+    text(cv, title, cx, y + 13, width - 8, 12, t.text, { align: 'center', font: 'bold' });
+    text(cv, value || '--', cx, y + 27, width - 8, 12, color, { align: 'center', font: 'bold' });
 }
 function wheel(cv, t, x, y, angle, cosine, sine) {
     const point = (dx, dy) => [x + dx * cosine - dy * sine, y + dx * sine + dy * cosine];
@@ -104,32 +93,32 @@ function wheel(cv, t, x, y, angle, cosine, sine) {
     };
     body(-1, t.tick);
     body(1, t.panelTop);
-    const shown = fmt(angle, 1) + '°', options = { align: 'center', font: 'num' };
-    const size = Math.min(36, 36 * 68 / Math.max(1, cv.textWidth(shown, 36, options)));
-    text(cv, shown, x, y + 12, 68, size, angle === null ? t.dim : C.cyan, options);
+    const shown = fmt(angle.value, 1) + '°', options = { align: 'center', font: 'num' };
+    const size = Math.min(30, 30 * 54 / Math.max(1, cv.textWidth(shown, 30, options)));
+    text(cv, shown, x, y + 10, 54, size, angle.live ? C.cyan : t.dim, options);
 }
 function wheelData(cv, t, vm, wheelId, x, y) {
     const options = { align: 'center', font: 'num' };
     wheelFields.forEach((field, index) => {
-        const value = physical(vm, field.prefix + wheelId, field.unit);
-        const shown = fmt(value, field.places) + ' ' + field.label;
-        const size = Math.min(28, 28 * 128 / Math.max(1, cv.textWidth(shown, 28, options)));
-        text(cv, shown, x, y - 24 + index * 32, 128, size, value === null ? t.dim : C.cyan, options);
+        const current = physical(vm, field.prefix + wheelId, field.unit);
+        const shown = fmt(current.value, field.places) + ' ' + field.label;
+        const size = Math.min(26, 26 * 108 / Math.max(1, cv.textWidth(shown, 26, options)));
+        text(cv, shown, x, y - 20 + index * 28, 108, size, current.live ? C.cyan : t.dim, options);
     });
 }
-function progress(cv, t, cx, y, end, value, side, fullScale) {
+function progress(cv, t, cx, y, end, current, side, fullScale) {
     cv.line(cx, y, end, y, 14, t.track);
-    if (value === null) return;
-    const fill = Math.min(1, Math.max(0, value * side) / fullScale);
-    if (fill > 0) cv.line(cx, y, cx + (end - cx) * fill, y, 10, C.cyan);
+    if (current.value === null) return;
+    const fill = Math.min(1, Math.max(0, current.value * side) / fullScale);
+    if (fill > 0) cv.line(cx, y, cx + (end - cx) * fill, y, 10, current.live ? C.cyan : t.dim);
 }
 function axle(cv, t, vm, name, cx, cy) {
     const motorTorque = physical(vm, 'sway' + name + 'MotorActual', 'Nm');
     const roadAngle = physical(vm, name === 'Front' ? 'frontAxle' : 'rearAxle', 'deg');
-    const rotation = -(roadAngle === null ? 0 : roadAngle) * (name === 'Front' ? 2 : 10) * Math.PI / 180;
+    const rotation = -(roadAngle.value === null ? 0 : roadAngle.value) * (name === 'Front' ? 2 : 10) * Math.PI / 180;
     const cosine = Math.cos(rotation), sine = Math.sin(rotation);
-    const shown = fmt(motorTorque, 2) + ' Nm', options = { align: 'center', font: 'num' }, width = 104;
-    const size = Math.min(21, 21 * width / Math.max(1, cv.textWidth(shown, 21, options)));
+    const shown = fmt(motorTorque.value, 2) + ' Nm', options = { align: 'center', font: 'num' }, width = 92;
+    const size = Math.min(20, 20 * width / Math.max(1, cv.textWidth(shown, 20, options)));
     [-1, 1].forEach((side) => {
         const start = cx + side * POWER_BOX_HALF_WIDTH;
         const wheelX = cx + side * WHEEL_OFFSET;
@@ -137,41 +126,39 @@ function axle(cv, t, vm, name, cx, cy) {
         progress(cv, t, start, cy, wheelX, motorTorque, side, MOTOR_TORQUE_FULL_SCALE_NM);
         wheel(cv, t, wheelX, cy, roadAngle, cosine, sine);
         const wheelId = (name === 'Front' ? 'F' : 'R') + (side < 0 ? 'LH' : 'RH');
-        wheelData(cv, t, vm, wheelId, cx + side * (WHEEL_OFFSET + 150), cy);
+        wheelData(cv, t, vm, wheelId, cx + side * 306, cy);
         // Repeat the actual axle measurement beside each half-bar, clear of the power column.
-        text(cv, shown, start + side * (12 + width / 2), cy + 47, width, size,
-            motorTorque === null ? t.dim : C.cyan, options);
+        text(cv, shown, start + side * (8 + width / 2), cy + 43, width, size,
+            motorTorque.live ? C.cyan : t.dim, options);
     });
 }
 function powerBox(cv, t, vm, id, cx, cy) {
     const power = physical(vm, id, 'hp');
-    const shown = fmt(power, 0) + ' HP';
+    const shown = fmt(power.value, 0) + ' HP';
     const options = { align: 'center', font: 'num' };
-    const size = Math.min(22, 22 * 100 / Math.max(1, cv.textWidth(shown, 22, options)));
+    const size = Math.min(22, 22 * 92 / Math.max(1, cv.textWidth(shown, 22, options)));
     cv.roundRect(cx - POWER_BOX_HALF_WIDTH, cy - 22, POWER_BOX_HALF_WIDTH * 2, 44, 6, t.panelTop);
     cv.strokeRoundRect(cx - POWER_BOX_HALF_WIDTH, cy - 22, POWER_BOX_HALF_WIDTH * 2, 44, 6, 2, t.tick);
-    text(cv, shown, cx, cy + 8, 100, size, power === null ? t.dim : C.cyan, options);
+    text(cv, shown, cx, cy + 8, 92, size, power.live ? C.cyan : t.dim, options);
 }
 function torqueSplit(cv, t, vm, cx, frontY, rearY) {
-    const rear = physical(vm, 'rearTorqueShare', '%'), middle = (frontY + rearY) / 2;
+    const current = physical(vm, 'rearTorqueShare', '%'), rear = current.value, middle = (frontY + rearY) / 2;
+    const color = current.live ? C.cyan : t.dim;
     const front = rear === null ? null : 100 - rear, top = frontY - 16, bottom = rearY + 16;
     cv.fillRect(cx - 14, top, 28, bottom - top, t.track);
     if (front !== null && front > 0) {
         const height = (middle - top) * front / 100;
-        cv.fillRect(cx - 11, middle - height, 22, height, C.cyan);
+        cv.fillRect(cx - 11, middle - height, 22, height, color);
     }
-    if (rear !== null && rear > 0) cv.fillRect(cx - 11, middle, 22, (bottom - middle) * rear / 100, C.cyan);
+    if (rear !== null && rear > 0) cv.fillRect(cx - 11, middle, 22, (bottom - middle) * rear / 100, color);
     cv.line(cx - 18, middle, cx + 18, middle, 2, t.tick);
 }
-module.exports = function dynamics(cv, t, vm) {
-    cv.targets = [];
-    const cx = 800, top = vm.contentTop + 24, bottom = vm.contentBottom - 36;
-    const spacing = Math.min(276, bottom - top - WHEEL_HALF_HEIGHT * 2), middle = (top + bottom) / 2;
-    pedals(cv, t, vm);
-    gMeter(cv, t, vm, middle);
+function chassis(cv, t, vm, box) {
+    const cx = box.x + box.w / 2, top = box.y + 8, bottom = box.y + box.h - 8;
+    const spacing = Math.min(222, bottom - top - (WHEEL_HALF_HEIGHT + 12) * 2), middle = (top + bottom) / 2;
     [-1, 1].forEach((side) => {
-        const outer = cx + side * 480;
-        cv.line(outer, top - 16, outer, bottom + 16, 2, t.tick);
+        const outer = cx + side * box.w / 2;
+        cv.line(outer, top, outer, bottom, 2, t.tick);
         cv.line(outer, middle, cx + side * POWER_BOX_HALF_WIDTH, middle, 2, t.tick);
     });
     axle(cv, t, vm, 'Front', cx, middle - spacing / 2);
@@ -179,4 +166,5 @@ module.exports = function dynamics(cv, t, vm) {
     torqueSplit(cv, t, vm, cx, middle - spacing / 2, middle + spacing / 2);
     powerBox(cv, t, vm, 'frontPower', cx, middle - spacing / 2);
     powerBox(cv, t, vm, 'rearPower', cx, middle + spacing / 2);
-};
+}
+module.exports = { chassis, gMeter, pedalStatus, physical };

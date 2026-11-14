@@ -1,0 +1,77 @@
+{
+  "id": "pong",
+  "title": "Pong",
+  "description": "Pong against a computer opponent, with knob and touch controls, difficulty settings, and saved matches",
+  "version": "1.0.0",
+  "vendor": "custom",
+  "loggingId": "OA9F",
+  "maxDiskUsage": 1048576,
+  "signals": {
+    "de.bmw.infotainment.vehicle.Vehicle2": {
+      "statusCarSpeed2": "rs"
+    },
+    "de.bmw.infotainment.controlelements.FrontCCU": {
+      "statusRotaryEncoderState": "rs"
+    }
+  },
+  "screens": [
+    {
+      "name": "MAIN",
+      "kind": "menu",
+      "title": "Pong",
+      "settings": true,
+      "items": [
+        ["button", "BTN_PLAY", "Play"],
+        ["button", "BTN_NEW", "New match"],
+        ["button", "BTN_HELP", "Controls"],
+        ["text3", "MENU_INFO", ""]
+      ]
+    },
+    {
+      "name": "GAME",
+      "kind": "canvas",
+      "title": "Pong",
+      "parent": "MAIN",
+      "graphic": "GAME_GFX",
+      "buttons": [
+        ["BTN_UP", "Paddle up"],
+        ["BTN_DOWN", "Paddle down"],
+        ["BTN_SERVE", "Serve"],
+        ["BTN_RESTART", "New match"],
+        ["BTN_PAUSE", "Pause / menu"]
+      ]
+    },
+    {
+      "name": "HELP",
+      "kind": "list",
+      "title": "Pong controls",
+      "parent": "MAIN",
+      "items": [
+        ["text3", "HELP_MOVE", "Your paddle is on the left. Turn the knob clockwise to move down and counterclockwise to move up. Hold the controller tilted up or down for continuous movement."],
+        ["text3", "HELP_TOUCH", "Tap the court at the height where you want your paddle. The arrow buttons also move it. Paddle movement is limited to the court."],
+        ["text3", "HELP_SERVE", "Press the controller or tap Serve to start a rally. Every point waits for another serve, including points scored by the computer."],
+        ["text3", "HELP_RULES", "Send the ball past the computer's paddle to score. The first side to the selected score wins. Hitting near a paddle's edge creates a steeper return; rallies get faster after each hit."],
+        ["text3", "HELP_SETTINGS", "Difficulty changes the computer's speed, reaction and accuracy, plus ball speed. Difficulty and match length apply to new matches; knob sensitivity changes immediately."],
+        ["text3", "HELP_PAUSE", "BACK or Pause returns to the menu and saves. Calls, popups, leaving the app and vehicle movement pause play. Resume explicitly when ready; a saved rally has a short ready pause."],
+        ["button", "BTN_HELP_BACK", "Back"]
+      ]
+    },
+    {
+      "name": "NEW_GAME",
+      "kind": "list",
+      "title": "Start a new match?",
+      "parent": "MAIN",
+      "items": [
+        ["text", "NEW_INFO", "Your current saved match will be replaced. Your best rally is kept."],
+        ["button", "BTN_NEW_CANCEL", "Keep current match"],
+        ["button", "BTN_NEW_CONFIRM", "Start new match"]
+      ]
+    }
+  ],
+  "settings": [
+    {"key": "parkedOnly", "label": "Parked only (pauses while driving)", "type": "bool", "default": true},
+    {"key": "difficulty", "label": "Difficulty (new match)", "type": "choice", "default": "normal", "options": [["easy", "Easy"], ["normal", "Normal"], ["hard", "Hard"]]},
+    {"key": "goal", "label": "First to (new match)", "type": "choice", "default": "11", "options": [["5", "5 points"], ["11", "11 points"], ["21", "21 points"]]},
+    {"key": "sensitivity", "label": "Knob sensitivity", "type": "choice", "default": "normal", "options": [["fine", "Fine"], ["normal", "Normal"], ["fast", "Fast"]]}
+  ]
+}

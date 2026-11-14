@@ -1,0 +1,78 @@
+{
+  "id": "tetris",
+  "title": "Tetris",
+  "description": "Falling blocks with controller and touch controls, hold, ghost pieces, and saved progress",
+  "version": "1.0.0",
+  "vendor": "custom",
+  "loggingId": "OA9F",
+  "maxDiskUsage": 1048576,
+  "signals": {
+    "de.bmw.infotainment.vehicle.Vehicle2": {
+      "statusCarSpeed2": "rs"
+    },
+    "de.bmw.infotainment.controlelements.FrontCCU": {
+      "statusRotaryEncoderState": "rs"
+    }
+  },
+  "screens": [
+    {
+      "name": "MAIN",
+      "kind": "menu",
+      "title": "Tetris",
+      "settings": true,
+      "items": [
+        ["button", "BTN_PLAY", "Play"],
+        ["button", "BTN_NEW", "New game"],
+        ["button", "BTN_HELP", "Controls"],
+        ["text3", "MENU_INFO", ""]
+      ]
+    },
+    {
+      "name": "GAME",
+      "kind": "canvas",
+      "title": "Tetris",
+      "parent": "MAIN",
+      "graphic": "GAME_GFX",
+      "buttons": [
+        ["BTN_LEFT", "Left"],
+        ["BTN_ROTATE", "Rotate"],
+        ["BTN_RIGHT", "Right"],
+        ["BTN_DOWN", "Soft drop"],
+        ["BTN_DROP", "Hard drop"],
+        ["BTN_HOLD", "Hold"],
+        ["BTN_CCW", "Rotate back"],
+        ["BTN_PAUSE", "Pause / menu"]
+      ]
+    },
+    {
+      "name": "HELP",
+      "kind": "list",
+      "title": "Tetris controls",
+      "parent": "MAIN",
+      "items": [
+        ["text3", "HELP_MOVE", "Turn the knob or tilt left/right to move. Held tilt repeats after 170 ms, every 60 ms."],
+        ["text3", "HELP_ROTATE", "Press to rotate clockwise. Tilt down for soft drop; tilt up once for hard drop."],
+        ["text3", "HELP_TOUCH", "Touch buttons also move, rotate, drop and hold. Hold is available once per piece. Rotate back turns counterclockwise."],
+        ["text3", "HELP_RULES", "Complete rows to clear them. Every 10 lines increases speed. Single / double / triple / four lines score 100 / 300 / 500 / 800 times your level. Soft drop scores 1 per cell; hard drop scores 2."],
+        ["text3", "HELP_PAUSE", "BACK or Pause returns to the menu and saves. Calls, popups and leaving the app pause play. Resume explicitly when ready. Parked only is on by default."],
+        ["button", "BTN_HELP_BACK", "Back"]
+      ]
+    },
+    {
+      "name": "NEW_GAME",
+      "kind": "list",
+      "title": "Start a new game?",
+      "parent": "MAIN",
+      "items": [
+        ["text", "NEW_INFO", "Your current saved game will be replaced. Your best score is kept."],
+        ["button", "BTN_NEW_CANCEL", "Keep current game"],
+        ["button", "BTN_NEW_CONFIRM", "Start new game"]
+      ]
+    }
+  ],
+  "settings": [
+    {"key": "parkedOnly", "label": "Parked only (pauses while driving)", "type": "bool", "default": true},
+    {"key": "ghost", "label": "Show landing outline", "type": "bool", "default": true},
+    {"key": "startLevel", "label": "Starting level (new game)", "type": "choice", "default": "1", "options": [["1", "1"], ["3", "3"], ["5", "5"], ["8", "8"], ["10", "10"]]}
+  ]
+}

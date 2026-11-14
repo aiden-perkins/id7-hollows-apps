@@ -1,107 +1,103 @@
 'use strict';
-const I = require('./instruments');
-const M = require('./meters');
-const { C, text, get, numeric, fmt, ink } = I;
-// October 2018 M850i specification: 68 L graphical reference, not a live capacity.
-const FUEL_CAPACITY_L = 68;
-const PERFORMANCE = [
-    { id: 'boost', label: 'BOOST' },
-    { id: 'horsepower', label: 'POWER' },
-    { id: 'torque', label: 'TORQUE' },
+const { C, text, get, fmt } = require('./instruments');
+const { chassis, gMeter, pedalStatus, physical } = require('./dynamics');
+
+const LITRES_PER_US_GALLON = 3.785411784;
+// Display reference requested for this car; not an ECU-reported capacity.
+const FUEL_CAPACITY_G = 18;
+// Fixed display references, not measured mechanical limits.
+const BARS = [
+    { id: 'rpm', label: 'RPM', unit: 'rpm', shownUnit: '', max: 8000, places: 0 },
+    { id: 'horsepower', label: 'POWER', unit: 'hp', shownUnit: 'HP', max: 1000, places: 0 },
+    { id: 'torque', label: 'TORQUE', unit: 'lb-ft', shownUnit: 'lb-ft', max: 1000, places: 0 },
+    { id: 'boost', label: 'BOOST', unit: 'psi', shownUnit: 'PSI', max: 40, places: 1 },
+    { id: 'brakePressure', label: 'BRAKE', unit: 'bar', shownUnit: 'bar', max: 84, places: 1, pedal: true },
+    { id: 'accelerator', label: 'ACCEL', unit: '%', shownUnit: '%', max: 100, places: 0, pedal: true },
 ];
-const TEMPERATURES = [
-    { id: 'oilCds', label: 'ENGINE OIL' },
-    { id: 'coolantCds', label: 'COOLANT' },
-    { id: 'transmissionDa12', label: 'TRANS OIL' },
-];
-function reported(vm, id, values) {
-    if (!vm.model.definitions[id]) return null;
-    const s = get(vm, id);
-    return s.state === 'live' && !s.retained && values.includes(s.value) ? s.value : null;
-}
-function temperatures(cv, t, vm, box) {
-    const width = (box.w - 24) / 3;
-    TEMPERATURES.forEach(({ id, label }, index) => {
-        const x = box.x + index * (width + 12) + width / 2;
-        const state = get(vm, id), value = vm.model.definitions[id].unit === 'F' ? numeric(vm, id) : null;
-        text(cv, label, x, box.y + 20, width, 16, t.dim, { align: 'center', font: 'bold' });
-        text(cv, fmt(value, 0) + ' °F', x, box.y + 64, width, 40, ink(t, state, C.blue),
-            { align: 'center', font: 'num' });
+function bars(cv, t, vm, box) {
+    const column = box.w / BARS.length, width = 48;
+    const top = box.y + 96, bottom = box.y + box.h - 8;
+    BARS.forEach((field, index) => {
+        const cx = box.x + column * (index + 0.5), x = cx - width / 2;
+        const current = physical(vm, field.id, field.unit);
+        // Preserve signed physical samples in the model, as with the previous performance dials.
+        const value = current.value === null || field.pedal ? current.value : Math.max(0, current.value);
+        const color = current.live ? field.pedal ? C.cyan : C.blue : t.dim;
+        const shown = fmt(value, field.places), options = { align: 'center', font: 'num' };
+        const size = Math.min(34, 34 * (column - 8) / Math.max(1, cv.textWidth(shown, 34, options)));
+        text(cv, field.label, cx, box.y + 22, column - 4, 16, t.dim, { align: 'center', font: 'bold' });
+        text(cv, shown, cx, box.y + 60, column - 8, size, color, options);
+        text(cv, field.shownUnit, cx, box.y + 83, column - 8, 17, t.dim, { align: 'center' });
+        cv.roundRect(x, top, width, bottom - top, 6, t.track);
+        if (value !== null) {
+            const height = (bottom - top - 6) * Math.max(0, Math.min(1, value / field.max));
+            if (height > 0) {
+                const y = bottom - 3 - height;
+                cv.roundRect(x + 3, y, width - 6, height, Math.min(4, height / 2), color);
+                if (height > 4) cv.line(x + 7, y + 2, x + width - 7, y + 2, 2, current.live ? t.text : t.dim);
+            }
+        }
+        cv.strokeRoundRect(x, top, width, bottom - top, 6, 2, t.tick);
+        [0, 0.25, 0.5, 0.75, 1].forEach((fraction) => {
+            const y = bottom - (bottom - top) * fraction;
+            cv.line(x + width + 3, y, x + width + 8, y, 1, t.tick);
+        });
     });
 }
-function fuel(cv, t, vm, x, y) {
-    const width = 280, total = vm.model.definitions.tankTotal.unit === 'L' ? numeric(vm, 'tankTotal') : null;
-    const color = ink(t, get(vm, 'tankTotal'), C.blue);
-    cv.strokeRoundRect(x, y + 48, width, 100, 7, 2, color);
-    cv.polyline([[x + 133, y + 48], [x + 133, y + 34], [x + 182, y + 34], [x + 197, y + 48]], 2, color);
-    cv.line(x + 142, y + 41, x + 179, y + 41, 3, color);
-    cv.polyline([[x + 245, y + 48], [x + 250, y + 37], [x + 273, y + 41], [x + 268, y + 48]], 3, color);
-    if (total !== null) {
-        const height = 94 * Math.max(0, Math.min(1, total / FUEL_CAPACITY_L));
-        if (height > 0) cv.fillRect(x + 3, y + 145 - height, width - 6, height, color + '20');
-    }
-    text(cv, fmt(total, 2) + ' L', x + width / 2, y + 81, width - 24, 20, color, { align: 'center', font: 'num' });
-    text(cv, fmt(total === null ? null : total / 3.785411784, 2) + ' G', x + width / 2, y + 112, width - 24, 30, color, { align: 'center', font: 'num' });
-    const percent = total === null ? null : Math.max(0, Math.min(100, total / FUEL_CAPACITY_L * 100));
-    text(cv, fmt(percent, 0) + '%', x + width / 2, y + 137, 58, 15, color, { align: 'center', font: 'num' });
-    ['tankLeft', 'tankRight'].forEach((id, index) => {
-        const litres = vm.model.definitions[id].unit === 'L' ? numeric(vm, id) : null, anchor = index ? x + width - 12 : x + 12;
-        text(cv, (index ? 'R ' : 'L ') + fmt(litres === null ? null : litres / 3.785411784, 2) + ' G',
-            anchor, y + 137, 92, 14, ink(t, get(vm, id), C.blue), { align: index ? 'right' : 'left', font: 'num' });
-    });
+function readout(cv, t, vm, id, label, unit, x, y, width, places) {
+    const current = physical(vm, id, unit), shown = fmt(current.value, places) + ' ' + (unit === 'F' ? '°F' : unit);
+    const options = { align: 'center', font: 'num' }, cx = x + width / 2;
+    const size = Math.min(36, 36 * width / Math.max(1, cv.textWidth(shown, 36, options)));
+    text(cv, label, cx, y + 22, width, 17, t.dim, { align: 'center', font: 'bold' });
+    text(cv, shown, cx, y + 65, width, size, current.live ? C.blue : t.dim, options);
 }
-function electrical(cv, t, vm, x, y) {
-    const width = 250, value = vm.model.definitions.voltage.unit === 'V' ? numeric(vm, 'voltage') : null;
-    const reading = vm.model.readings.voltage, color = ink(t, get(vm, 'voltage'), C.blue);
-    cv.strokeRoundRect(x, y + 48, width, 100, 7, 2, color);
-    cv.fillRect(x + width, y + 80, 9, 32, color);
-    cv.line(x + 16, y + 68, x + 34, y + 68, 2, color); cv.line(x + 25, y + 59, x + 25, y + 77, 2, color);
-    cv.line(x + width - 34, y + 68, x + width - 16, y + 68, 2, color);
-    text(cv, fmt(value, 2) + ' V', x + width / 2, y + 108, width - 28, 32, color, { align: 'center', font: 'num' });
-    text(cv, 'MIN ' + fmt(reading.min, 2), x + 14, y + 137, 104, 15, t.dim, { font: 'num' });
-    text(cv, 'MAX ' + fmt(reading.max, 2), x + width - 14, y + 137, 104, 15, t.dim, { align: 'right', font: 'num' });
+function fuel(cv, t, vm, x, y, width) {
+    const current = physical(vm, 'tankTotal', 'L');
+    const gallons = current.value === null ? null : current.value / LITRES_PER_US_GALLON;
+    const percent = gallons === null ? null : Math.max(0, Math.min(100, gallons / FUEL_CAPACITY_G * 100));
+    const cx = x + width / 2, shown = fmt(gallons, 2) + ' G  ' + fmt(percent, 0) + '%';
+    const options = { align: 'center', font: 'num' };
+    const size = Math.min(32, 32 * width / Math.max(1, cv.textWidth(shown, 32, options)));
+    text(cv, 'FUEL', cx, y + 22, width, 17, t.dim, { align: 'center', font: 'bold' });
+    text(cv, shown, cx, y + 65, width, size, current.live ? C.blue : t.dim, options);
 }
 function exhaust(cv, t, vm, x, y) {
-    const center = x + 128;
-    cv.roundRect(center - 46, y + 50, 92, 35, 10, t.panelTop);
-    cv.strokeRoundRect(center - 46, y + 50, 92, 35, 10, 2, t.tick);
-    cv.line(center, y + 40, center, y + 50, 12, t.tick);
+    const cx = x + 64;
+    text(cv, 'EXHAUST', cx, y + 22, 120, 16, t.dim, { align: 'center', font: 'bold' });
+    cv.roundRect(cx - 22, y + 32, 44, 18, 5, t.panelTop);
+    cv.strokeRoundRect(cx - 22, y + 32, 44, 18, 5, 1.5, t.tick);
+    cv.line(cx, y + 26, cx, y + 32, 5, t.tick);
     ['Left', 'Right'].forEach((side, index) => {
-        const px = center + (index ? 75 : -75), state = reported(vm, 'exhaust' + side, ['OPEN', 'CLOSED']);
-        const color = state === null ? t.dim : C.blue;
-        cv.polyline([[center + (index ? 46 : -46), y + 68], [px, y + 68], [px, y + 85]], 11, t.tick);
-        if (state === 'CLOSED') cv.circle(px, y + 93, 14, color);
-        else cv.arc(px, y + 93, 10, 14, 0, 360, color);
+        const px = cx + (index ? 42 : -42), state = get(vm, 'exhaust' + side);
+        const value = state.state === 'live' && !state.retained ? state.value : null;
+        const color = value === 'OPEN' || value === 'CLOSED' ? C.blue : t.dim;
+        cv.polyline([[cx + (index ? 22 : -22), y + 41], [px, y + 41], [px, y + 52]], 5, t.tick);
+        if (value === 'CLOSED') cv.circle(px, y + 64, 9, color);
+        else cv.arc(px, y + 64, 6, 9, 0, 360, color);
     });
-    const labels = ['Open', 'Closed', 'OEM'], modes = ['open', 'closed', 'oem'];
-    modes.forEach((mode, index) => {
-        const bx = x + 280 + index * 104, by = y + 62, selected = vm.exhaustMode === mode;
-        cv.roundRect(bx, by, 96, 48, 7, selected ? C.blue + '28' : t.panelTop);
-        cv.strokeRoundRect(bx, by, 96, 48, 7, 1.5, selected ? C.blue : t.tick);
-        text(cv, labels[index], bx + 48, by + 30, 88, 18, selected ? C.blue : t.text, { align: 'center', font: 'bold' });
-        cv.targets.push({ key: 'exhaust' + labels[index], x: bx, y: by, w: 96, h: 48,
+    [['open', 'Open'], ['closed', 'Closed'], ['oem', 'OEM']].forEach(([mode, label], index) => {
+        const bx = x + 144 + index * 168, by = y + 22, selected = vm.exhaustMode === mode;
+        cv.roundRect(bx, by, 160, 56, 7, selected ? C.blue + '28' : t.panelTop);
+        cv.strokeRoundRect(bx, by, 160, 56, 7, 1.5, selected ? C.blue : t.tick);
+        text(cv, label, bx + 80, by + 36, 148, 25, selected ? C.blue : t.text, { align: 'center', font: 'bold' });
+        cv.targets.push({ key: 'exhaust' + label, x: bx, y: by, w: 160, h: 56,
             run: () => vm.setExhaust(mode) });
     });
 }
 module.exports = function driving(cv, t, vm) {
     cv.targets = [];
-    const top = vm.contentTop + 4, bottom = vm.contentBottom - 4, height = bottom - top;
-    const leftWidth = 928, right = 960, rightWidth = 624, dialWidth = (leftWidth - 32) / 3;
-    cv.roundRect(16, top, leftWidth, height, 10, t.panelBottom);
-    cv.strokeRoundRect(16, top, leftWidth, height, 10, 1, t.track);
-    cv.roundRect(right, top, rightWidth, height, 10, t.panelBottom);
-    cv.strokeRoundRect(right, top, rightWidth, height, 10, 1, t.track);
-    PERFORMANCE.forEach(({ id, label }, index) => {
-        M.dial(cv, t, vm, id, label,
-            { x: 32 + index * dialWidth, y: top + 16, w: dialWidth, h: height - 32 }, C.blue);
-    });
-    [0.24, 0.67].forEach((fraction) => {
-        const y = top + height * fraction;
-        cv.line(right + 16, y, right + rightWidth - 16, y, 1, t.track);
-    });
-    temperatures(cv, t, vm, { x: right + 16, y: top + 12, w: rightWidth - 32 });
-    const accessoryTop = top + height * 0.455 - 91;
-    electrical(cv, t, vm, right + 24, accessoryTop);
-    fuel(cv, t, vm, right + 320, accessoryTop);
-    exhaust(cv, t, vm, right + 16, top + height * 0.835 - 75);
+    const top = vm.contentTop + 4, bottom = vm.contentBottom - 4;
+    const footerTop = bottom - 88, height = footerTop - 12 - top;
+    gMeter(cv, t, vm, { x: 16, y: top, w: 256, h: height });
+    pedalStatus(cv, t, vm, 'parkingBrake', 'PARKING BRAKE', 78, top + height - 32, 124);
+    pedalStatus(cv, t, vm, 'kickdown', 'KICKDOWN', 210, top + height - 32, 124);
+    chassis(cv, t, vm, { x: 288, y: top, w: 740, h: height });
+    bars(cv, t, vm, { x: 1056, y: top, w: 528, h: height });
+    cv.line(16, footerTop, 1584, footerTop, 1, t.track);
+    readout(cv, t, vm, 'oilCds', 'OIL', 'F', 16, footerTop, 148, 0);
+    readout(cv, t, vm, 'coolantCds', 'COOLANT', 'F', 180, footerTop, 148, 0);
+    readout(cv, t, vm, 'transmissionDa12', 'TRANS', 'F', 344, footerTop, 148, 0);
+    readout(cv, t, vm, 'voltage', 'BATTERY', 'V', 508, footerTop, 148, 2);
+    fuel(cv, t, vm, 672, footerTop, 244);
+    exhaust(cv, t, vm, 940, footerTop);
 };
