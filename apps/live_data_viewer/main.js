@@ -1,10 +1,11 @@
 'use strict';
 const mgu = require('./kit/mgu');
 const D = require('./definitions');
-const { Storage } = require('./storage');
+const { Storage, currentPage } = require('./storage');
 const { Model } = require('./model');
 const { Services } = require('./services');
 const V = require('./view');
+const statusIds = new Set(require('./status').ids);
 const Demo = require('./demo');
 const { Bm3Feed } = require('./bm3_feed');
 
@@ -12,8 +13,9 @@ mgu.run({
     async start(ctx) {
         const ui = ctx.ui, storage = new Storage(ctx.dataDir);
         let closed = false, loop = null, dirty = true, immediate = true, lastDraw = 0, activeKey = '';
-        const section = ctx.settings.get('section') || 'driving';
-        const state = { page: section === 'dynamics' ? 'driving' : section, exhaustMode: null, notice: '', noticeUntil: 0 };
+        const section = currentPage(ctx.settings.get('section'));
+        const state = { page: Object.prototype.hasOwnProperty.call(V.titles, section) ? section : 'driving',
+            exhaustMode: null, notice: '', noticeUntil: 0 };
         ctx.settings.values.section = state.page;
         const changed = () => { dirty = true; if (loop) loop.kick(); };
         const model = new Model(storage, changed, (error) => { tell(error.message); ctx.log.warn(error); });
@@ -33,7 +35,7 @@ mgu.run({
             immediate = true; changed();
         };
         const pageDefs = (page) => D.definitions.filter((d) => d.id === 'driveMode' ||
-            d.page === page || d.pages && d.pages.includes(page));
+            (page === 'status' ? statusIds.has(d.id) : d.page === page || d.pages && d.pages.includes(page)));
         function collect(force) {
             if (closed) return;
             const current = services, visible = shown(), useBm3 = !demo && visible && state.page === 'bm3';
@@ -52,7 +54,12 @@ mgu.run({
                 if (current) await current.diagnostic.idle();
                 if (closed || generation !== collectionGeneration || current !== services) return;
                 if (useBm3) bm3.start(engine);
-                else if (current) current.activate(ids, force, state.page);
+                else if (current) {
+                    current.activate(ids, force, state.page);
+                    if (visible && state.page === 'status' && engine !== 'unset' && !ctx.preview && ctx.signals.hasNative()) {
+                        bm3.start(engine, { withTransport: (work) => current.diagnostic.withPausedReads(work) });
+                    }
+                }
             }).catch((e) => { if (!closed) { tell(e.message); ctx.log.warn(e); } });
         }
         async function setExhaust(mode) {

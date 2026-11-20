@@ -1,6 +1,7 @@
 'use strict';
 const G = require('./kit/gauges');
 const { FULL } = require('./kit/display');
+const { validRpm } = require('./calculations');
 const V = require('./view');
 
 const W = 1600, H = 520, RIGHT = 1576;
@@ -34,11 +35,12 @@ function chip(cv, t, action, rect, focused) {
 }
 function target(cv, vm, action, index, rect, scope) {
     if (vm.modal && scope !== 'modal') return;
-    cv.targets.push(Object.assign({ key: scope + ':' + action.id, run: () => vm.activate(index) }, rect));
+    cv.targets.push(Object.assign({ key: scope + ':' + action.id,
+        run: () => vm.activate(index, action.id, scope, vm.trip && vm.trip.id) }, rect));
 }
-function controls(cv, t, vm, ids) {
+function controls(cv, t, vm, ids, span = 1552) {
     const items = vm.actions.map((action, index) => ({ action, index })).filter((item) => ids.includes(item.action.id));
-    const width = (1552 - 16 * (items.length - 1)) / Math.max(1, items.length);
+    const width = (span - 16 * (items.length - 1)) / Math.max(1, items.length);
     items.forEach((item, i) => {
         const rect = { x: 24 + i * (width + 16), y: vm.contentBottom - 44, w: width, h: 44 };
         chip(cv, t, item.action, rect, vm.focus === item.index);
@@ -89,9 +91,12 @@ function chart(cv, t, vm, box, metricName, axis, controls) {
     } else label(cv, caption, left, box.y + 21, width, 15, t.dim);
     for (let i = 0; i < 5; i++) cv.line(left, top + height * i / 4, left + width, top + height * i / 4, 1, t.track);
     if (!valid.length || vm.graphLoading || !vm.trip) {
+        const stats = vm.trip && vm.trip.stats;
+        const fuelMessage = stats && stats.matchedMs && stats.matchedGallons === 0 ? 'No finite MPG / zero matched fuel' :
+            stats && stats.fuelMs ? 'Waiting for matched fuel and speed samples' : 'Fuel consumption is unavailable';
         const why = vm.graphLoading ? 'Loading recorded samples' : !vm.trip ? 'Start a trip to record this view' :
             xkey === 'distance' ? 'Distance alignment unavailable' : key === 'altitude' ? 'Waiting for valid altitude' :
-                key === 'mpg' ? (vm.trip.stats.fuelMs && vm.trip.stats.matchedGallons === 0 ? 'No finite MPG / zero matched fuel' : 'Fuel consumption is unavailable') : 'Speed calibration is unavailable';
+                key === 'mpg' ? fuelMessage : 'Speed calibration is unavailable';
         label(cv, why, left + width / 2, top + height / 2, width - 30, box.compact ? 19 : 25, t.dim, { align: 'center' });
     } else {
         let xmin = Infinity, xmax = -Infinity, ymin = Infinity, ymax = -Infinity;
@@ -139,15 +144,24 @@ function trip(cv, t, vm) {
     const averageSpeed = a && distanceMs ? amount(a.distanceMiles * 3600000 / distanceMs) : '--';
     const movingSpeed = a && movingMs ? amount(a.movingMiles * 3600000 / movingMs) : '--';
     const averageSource = s && s.policy.calculationVersion === 2 ? 'GPS-COVERED AVG' : 'SPEED-COVERED AVG';
-    const top = vm.contentTop, h = vm.contentBottom - top, half = (h - 12) / 2;
-    panel(cv, t, 24, top, 420, h, vm.saved ? averageSource : vm.demo ? 'DEMO VEHICLE' : 'LIVE VEHICLE');
+    const controlsHeight = cv.own && vm.saved ? controls(cv, t, vm, ['favorite', 'edit', 'delete', 'recover', 'close'], 800) : 0;
+    const top = vm.contentTop, h = vm.contentBottom - top - controlsHeight, half = (h - 12) / 2;
+    panel(cv, t, 24, top, 420, h, vm.saved ? averageSource : vm.demo ? null : 'LIVE VEHICLE');
+    const record = cv.own && !vm.saved ? vm.actions[0] : null;
+    if (record) {
+        const rect = { x: 254, y: top + 12, w: 174, h: 40 };
+        chip(cv, t, vm.busy ? { label: 'Working...', enabled: false } : record, rect, vm.focus === 0);
+        if (!vm.busy) target(cv, vm, record, 0, rect, 'trip');
+    }
     label(cv, vm.saved ? averageSpeed : amount(live && live.speed.state === 'live' ? live.speed.value : null), 42, top + 105, 285, 73, blue, { font: 'num' });
     cv.text('mph', 423, top + 104, 23, blue, { align: 'right' });
-    if (!vm.saved) label(cv, 'Gear ' + (live && live.gear.state === 'live' ? live.gear.value : '--'), 423, top + 27, 160, 23, t.text, { align: 'right' });
+    if (!vm.saved) label(cv, 'Gear ' + (live && live.gear.state === 'live' ? live.gear.value : '--'),
+        423, top + (record ? 76 : 27), 160, 23, t.text, { align: 'right' });
+    const altitude = vm.saved ? a && a.altitude.end : live && live.gps.state === 'live' ? live.gps.altitudeFt : null;
     const cells = [
-        ['Observed distance / mi', a && distanceMs ? amount(a.distanceMiles) : '--'],
+        ['Distance', distanceMs ? V.number(a.distanceMiles, 'mi') : '--'],
         ['Timer', V.duration(a && a.durationMs)],
-        ['Altitude / ft', amount(vm.saved ? a && a.altitude.end : live && live.gps.state === 'live' ? live.gps.altitudeFt : null)],
+        ['Altitude', numeric(altitude) ? V.number(altitude, 'ft') : '--'],
         ['Top speed / mph', amount(a && a.topSpeed)],
         ['Fuel used / US gal', a && a.fuelMs ? amount(a.fuelGallons) : 'Unavailable'],
         ['Moving time', a && a.speedMs ? V.duration(a.movingMs) : '--:--:--'],
@@ -155,12 +169,8 @@ function trip(cv, t, vm) {
     cells.forEach((cell, i) => {
         const x = 42 + i % 2 * 201, y = top + 137 + Math.floor(i / 2) * (h - 180) / 3;
         label(cv, cell[0], x, y, 181, 16, t.dim);
-        label(cv, cell[1], x, y + 28, 181, 27, t.text, { font: 'num' });
+        label(cv, cell[1], x, y + 28, 181, 27, t.text, { font: cell[1] === 'Unavailable' ? 'label' : 'num' });
     });
-    label(cv, V.distanceSource(s), 42, top + h - 35, 382, 12, t.dim);
-    label(cv, 'Dist ' + (a ? V.coverage(distanceMs, a.durationMs) : '--') + ' / speed ' +
-        (a ? V.coverage(a.speedMs, a.durationMs) : '--') + ' / fuel ' +
-        (a ? V.coverage(a.fuelMs, a.durationMs) : '--'), 42, top + h - 15, 382, 12, t.dim);
     chart(cv, t, vm, { x: 460, y: top, w: 1116, h: half, compact: true,
         summary: (s && s.policy.calculationVersion === 2 ? 'GPS' : 'Speed') + '-covered avg ' + averageSpeed +
             ' mph / Moving-covered ' + movingSpeed + ' mph' }, 'speed', 'time', false);
@@ -172,6 +182,7 @@ function elevation(cv, t, vm) {
     const top = vm.contentTop, h = vm.contentBottom - top;
     chart(cv, t, vm, { x: 24, y: top, w: 1090, h: h - 60 }, 'altitude', 'time', false);
     const a = vm.trip && vm.trip.stats.altitude;
+    const verticalFpm = vm.saved ? vm.projection && vm.projection.verticalFpm : a && a.verticalFpm;
     const values = [['First', a && a.start], ['Last', a && a.end], ['Net', a && a.start !== null && a.end !== null ? a.end - a.start : null], ['Minimum', a && a.min], ['Maximum', a && a.max]];
     values.forEach((v, i) => {
         const x = 24 + i * 221;
@@ -181,7 +192,7 @@ function elevation(cv, t, vm) {
     });
     panel(cv, t, 1130, top, 446, h, 'CLIMBING ESTIMATES');
     [['Ascent', a && a.coverageMs ? a.ascent : null, 'ft'], ['Descent', a && a.coverageMs ? a.descent : null, 'ft'],
-        ['Vertical speed', a && a.verticalFpm, 'ft/min']].forEach((v, i) => {
+        ['Vertical speed', verticalFpm, 'ft/min']].forEach((v, i) => {
         const y = top + 84 + i * (h - 180) / 3;
         cv.text(v[0], 1148, y, 18, t.dim);
         label(cv, amount(v[1]) + ' ' + v[2], 1556, y + 3, 240, 28, i === 1 ? t.text : blue, { align: 'right', font: 'num' });
@@ -205,11 +216,13 @@ function fuel(cv, t, vm) {
     const top = vm.contentTop, h = vm.contentBottom - top - controls(cv, t, vm, ['previousRows', 'nextRows', 'columns']);
     panel(cv, t, 24, top, 348, h, 'FUEL SUMMARY');
     label(cv, 'FUEL USED / US GAL', 42, top + 73, 310, 17, t.dim, { font: 'bold' });
-    label(cv, a && a.fuelMs ? amount(a.fuelGallons) : 'Unavailable', 42, top + 126, 310, 44, blue, { font: 'num' });
+    const fuelCovered = a && a.fuelMs;
+    label(cv, fuelCovered ? amount(a.fuelGallons) : 'Unavailable', 42, top + 126, 310, 44, blue, { font: fuelCovered ? 'num' : 'label' });
     label(cv, 'MATCHED AVERAGE / US MPG', 42, top + h * 0.57, 310, 17, t.dim, { font: 'bold' });
-    const economy = a && a.matchedMs && a.matchedGallons > 0 ? amount(a.matchedMiles / a.matchedGallons) :
+    const hasMpg = a && a.matchedMs && a.matchedGallons > 0;
+    const economy = hasMpg ? amount(a.matchedMiles / a.matchedGallons) :
         a && a.matchedMs && a.matchedMiles > 0 ? 'Coasting' : 'Unavailable';
-    label(cv, economy, 42, top + h * 0.57 + 51, 310, 42, green, { font: economy === 'Coasting' ? 'label' : 'num' });
+    label(cv, economy, 42, top + h * 0.57 + 51, 310, 42, green, { font: hasMpg ? 'num' : 'label' });
     coverageBar(cv, t, 42, top + h - 47, 310, 'Matched coverage', a ? a.matchedMs : 0, a ? a.durationMs : 0);
     label(cv, 'Rolling graph: 60-second MPG', 42, top + h - 13, 310, 16, t.dim);
     chart(cv, t, vm, { x: 388, y: top, w: 680, h }, 'mpg', 'time', false);
@@ -220,45 +233,48 @@ function fuel(cv, t, vm) {
     label(cv, 'Speed bands ' + (start + 1) + '-' + Math.min(start + 8, names.length) + ' / ' + names.length, 1100, top + 27, 458, 17, t.dim);
     const rows = names.slice(start, start + 8).map((name, i) => {
         const b = a && a.bands[start + i];
-        if (vm.tableCoverage) return [name, b ? amount(b.durationMs / 1000) : '--',
+        if (vm.tableCoverage) return [name, b ? amount(b.durationMs / 60000) : '--',
             b && b.durationMs ? amount(b.distanceMs / b.durationMs * 100) : '--',
             b && b.durationMs ? amount(b.fuelMs / b.durationMs * 100) : '--',
             b && b.durationMs ? amount(b.matchedMs / b.durationMs * 100) : '--'];
-        return [name, b ? amount(b.durationMs / 1000) : '--', b && b.distanceMs ? amount(b.distanceMiles) : '--',
+        return [name, b ? amount(b.durationMs / 60000) : '--', b && b.distanceMs ? amount(b.distanceMiles) : '--',
             b && b.fuelMs ? amount(b.fuelGallons) : '--',
             b && b.matchedMs && b.matchedGallons > 0 ? amount(b.matchedMiles / b.matchedGallons) :
                 b && b.matchedMs ? (b.matchedMiles > 0 ? 'Coast' : 'N/A') : '--'];
     });
     const distanceLabel = s && s.policy.calculationVersion === 2 ? 'Dist %' : 'Speed %';
-    const columns = vm.tableCoverage ? [['mph', 0.2], ['Time s', 0.2], [distanceLabel, 0.2], ['Fuel %', 0.2], ['Match %', 0.2]] :
-        [['mph', 0.2], ['Time s', 0.2], ['Miles', 0.2], ['US gal', 0.2], ['MPG', 0.2]];
+    const columns = vm.tableCoverage ? [['mph', 0.2], ['Time min', 0.2], [distanceLabel, 0.2], ['Fuel %', 0.2], ['Match %', 0.2]] :
+        [['mph', 0.2], ['Time min', 0.2], ['Miles', 0.2], ['US gal', 0.2], ['MPG', 0.2]];
     table(cv, t, columns, rows, 1092, top + 32, 476, (h - 90) / 8, 16);
     label(cv, V.distanceSource(s), 1100, top + h - 12, 460, 12, t.dim);
 }
 function gears(cv, t, vm) {
     const a = vm.trip && vm.trip.stats, r = a && a.rpm;
+    const rpmMax = vm.saved && vm.projection && vm.projection.points.length ? vm.projection.rpmMax : r && validRpm(r.max) ? r.max : null;
     const top = vm.contentTop, h = vm.contentBottom - top - controls(cv, t, vm, ['columns']);
     panel(cv, t, 24, top, 1108, h);
-    const rows = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10'].map((name) => {
+    const names = ['1', '2', '3', '4', '5', '6', '7', '8', 'R'];
+    const rows = names.map((name) => {
         const b = a && a.gears[name];
+        const distanceShare = b && b.distanceMs && a.distanceMiles > 0 ? amount(b.distanceMiles / a.distanceMiles * 100) + '%' : '--';
         if (vm.tableCoverage) return [name, b ? amount(b.durationMs / 1000) : '--',
-            b && b.durationMs ? amount(b.distanceMs / b.durationMs * 100) + '%' : '--',
+            distanceShare,
             b && b.durationMs ? amount(b.fuelMs / b.durationMs * 100) + '%' : '--',
             b && b.durationMs ? amount(b.matchedMs / b.durationMs * 100) + '%' : '--', b ? String(b.shifts) : '--'];
         return [name, b ? amount(b.durationMs / 1000) : '--', b && b.distanceMs ? amount(b.distanceMiles) : '--',
             b ? String(b.shifts) : '--', b && b.fuelMs ? amount(b.fuelGallons) : '--',
             b && b.matchedMs && b.matchedGallons > 0 ? amount(b.matchedMiles / b.matchedGallons) :
                 b && b.matchedMs ? (b.matchedMiles > 0 ? 'Coasting' : 'Undefined') : '--',
-            b && b.durationMs ? amount(b.distanceMs / b.durationMs * 100) + '%' : '--'];
+            distanceShare];
     });
-    const distanceLabel = vm.trip && vm.trip.policy.calculationVersion === 2 ? 'Dist %' : 'Speed %';
+    const distanceLabel = 'Trip miles %';
     const columns = vm.tableCoverage ? [['Gear', 0.1], ['Time / s', 0.2], [distanceLabel, 0.18], ['Fuel %', 0.18], ['Matched %', 0.2], ['Shifts', 0.14]] :
         [['Gear', 0.08], ['Time / s', 0.18], ['Miles', 0.15], ['Shifts', 0.09], ['US gal', 0.15], ['US MPG', 0.15], [distanceLabel, 0.2]];
-    table(cv, t, columns, rows, 34, top + 8, 1088, (h - 76) / 10, 17);
+    table(cv, t, columns, rows, 34, top + 8, 1088, (h - 76) / names.length, 17);
     label(cv, V.distanceSource(vm.trip), 42, top + h - 12, 1072, 13, t.dim);
     panel(cv, t, 1148, top, 428, h, 'ENGINE / GEAR SUMMARY');
     [
-        ['RPM minimum', r && r.min], ['RPM maximum', r && r.max],
+        ['RPM minimum', r && r.min], ['RPM maximum', rpmMax],
         ['Weighted RPM', r && r.coverageMs ? r.rpmMs / r.coverageMs : null],
         ['Revolutions', r && r.coverageMs ? r.rpmMs / 60000 : null],
     ].forEach((cell, i) => {
@@ -268,14 +284,15 @@ function gears(cv, t, vm) {
     });
     coverageBar(cv, t, 1166, top + h - 122, 392, 'RPM coverage', r ? r.coverageMs : 0, a ? a.durationMs : 0);
     const time = (key) => a && a.gears[key] ? amount(a.gears[key].durationMs / 1000) : '--';
-    label(cv, 'P ' + time('P') + ' / R ' + time('R') + ' / N ' + time('N') + ' s', 1166, top + h - 76, 392, 17, t.dim);
-    const unknown = a ? Object.keys(a.gears).filter((key) => !['1', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'P', 'R', 'N', 'NP'].includes(key))
+    label(cv, 'P ' + time('P') + ' / N ' + time('N') + ' s', 1166, top + h - 76, 392, 17, t.dim);
+    const unknown = a ? Object.keys(a.gears).filter((key) => !names.includes(key) && !['P', 'N', 'NP'].includes(key))
         .reduce((total, key) => total + a.gears[key].durationMs, 0) : null;
     label(cv, 'N/P ' + time('NP') + ' / Unknown ' + (unknown === null ? '--' : amount(unknown / 1000)) + ' s', 1166, top + h - 44, 392, 17, t.dim);
     label(cv, 'Shifts count forward-gear changes only.', 1166, top + h - 13, 392, 16, t.dim);
 }
 function history(cv, t, vm) {
-    const top = vm.contentTop, h = vm.contentBottom - top;
+    const bottom = vm.contentBottom - (cv.own ? controls(cv, t, vm, ['selectTrips', 'deleteUnfavorited', 'cancelSelection', 'deleteSelected'], 680) : 0);
+    const top = vm.contentTop, h = bottom - top;
     if (!vm.history.length) {
         empty(cv, t, 24, top, 1552, h, 'Your trips will appear here', 'Record a trip, then Finish to save it. Interrupted trips remain recoverable.');
         return;
@@ -283,24 +300,35 @@ function history(cv, t, vm) {
     const pageSize = vm.historyPageSize, pages = Math.ceil(vm.history.length / pageSize);
     const page = listPage(vm, vm.history.length, pageSize, 'historyPage'), first = page * pageSize;
     const rowHeight = Math.min(100, (h - 28 - (pages > 1 ? 58 : 0) - (pageSize - 1) * 8) / pageSize);
+    const selection = vm.historySelection;
     label(cv, 'Trips ' + (first + 1) + '-' + Math.min(first + pageSize, vm.history.length) + ' / ' + vm.history.length, 40, top + 16, 1520, 17, t.dim);
     vm.history.slice(first, first + pageSize).forEach((s, i) => {
         const index = first + i, rect = { x: 40, y: top + 28 + i * (rowHeight + 8), w: 1520, h: rowHeight };
+        const action = vm.actions[index], checked = selection && selection.has(s.id);
         const titleY = rect.y + rowHeight * 0.37 + 5, detailY = rect.y + rowHeight * 0.74 + 5;
-        selectable(cv, t, rect, vm.focus === index);
+        selectable(cv, t, rect, vm.focus === index || checked);
         const status = s.demo ? 'DEMO' : s.status === 'finished' ? 'SAVED' : 'INTERRUPTED', distanceMs = V.distanceCoverage(s);
-        label(cv, s.name, rect.x + 24, titleY, 870, 26, t.text, { font: 'bold' });
+        label(cv, s.name, rect.x + 24, titleY, 870, 26, action.enabled ? t.text : t.dim, { font: 'bold' });
         label(cv, V.duration(s.stats.durationMs) + ' / ' + (distanceMs ? amount(s.stats.distanceMiles) + ' mi observed' : '-- mi'),
             rect.x + rect.w - 58, titleY, 560, 23, t.text, { align: 'right', font: 'num' });
-        label(cv, V.date(s.startedAt) + ' / ' + status, rect.x + 24, detailY, 550, 18, status === 'INTERRUPTED' ? t.warn : t.dim);
+        label(cv, V.date(s.startedAt) + ' / ' + status + (s.favorite ? ' / FAVORITE' : ''),
+            rect.x + 24, detailY, 550, 18, status === 'INTERRUPTED' ? t.warn : t.dim);
         label(cv, V.distanceSource(s) + ' / distance ' + V.coverage(distanceMs, s.stats.durationMs),
             rect.x + rect.w - 58, detailY, 900, 17, t.dim, { align: 'right' });
         const cx = rect.x + rect.w - 28, cy = rect.y + rowHeight / 2;
-        cv.line(cx - 5, cy - 8, cx + 3, cy, 2.5, t.dim);
-        cv.line(cx + 3, cy, cx - 5, cy + 8, 2.5, t.dim);
-        target(cv, vm, vm.actions[index], index, rect, 'history');
+        if (!selection) {
+            cv.line(cx - 5, cy - 8, cx + 3, cy, 2.5, t.dim);
+            cv.line(cx + 3, cy, cx - 5, cy + 8, 2.5, t.dim);
+        } else if (action.enabled) {
+            cv.strokeRoundRect(cx - 10, cy - 10, 20, 20, 4, 2, checked ? blue : t.dim);
+            if (checked) {
+                cv.line(cx - 5, cy, cx - 1, cy + 4, 2.5, blue);
+                cv.line(cx - 1, cy + 4, cx + 6, cy - 5, 2.5, blue);
+            }
+        }
+        target(cv, vm, action, index, rect, 'history');
     });
-    if (pages > 1) pagination(cv, t, vm, 'trips', page, pages, vm.changeHistoryPage);
+    if (pages > 1) pagination(cv, t, Object.assign({}, vm, { contentBottom: bottom }), 'trips', page, pages, vm.changeHistoryPage);
 }
 function records(cv, t, vm) {
     const top = vm.contentTop, h = vm.contentBottom - top;
@@ -313,7 +341,7 @@ function records(cv, t, vm) {
         selectable(cv, t, rect, vm.focus === first + i);
         target(cv, vm, vm.actions[first + i], first + i, rect, 'records');
         label(cv, record.label, x + 22, y + 31 * scale, 724, 23 * scale, t.dim, { font: 'bold' });
-        label(cv, trip ? amount(record.value) + ' ' + record.unit : 'Unavailable', x + 22, y + height * 0.3, 724, 38 * scale, trip ? blue : t.dim, { font: 'num' });
+        label(cv, trip ? amount(record.value) + ' ' + record.unit : 'Unavailable', x + 22, y + height * 0.3, 724, 38 * scale, trip ? blue : t.dim, { font: trip ? 'num' : 'label' });
         label(cv, trip ? trip.name : 'No eligible saved trip', x + 22, y + height * 0.46, 724, 24 * scale, t.text, { font: 'bold' });
         label(cv, trip ? V.date(trip.startedAt) : 'Demo and unfinished trips do not compete', x + 22, y + height * 0.57, 724, 18 * scale, t.dim);
         label(cv, trip ? 'Coverage ' + V.coverage(record.coverageMs, record.durationMs) + ' / ' +
@@ -329,26 +357,6 @@ function records(cv, t, vm) {
         label(cv, trip ? 'Press to open winning trip' : 'Record unavailable', x + 22, y + height - 17 * scale, 724, 15 * scale, trip ? blue : t.dim);
     });
     if (pages > 1) pagination(cv, t, vm, 'records', page, pages, vm.changeRecordsPage);
-}
-function menu(cv, t, vm) {
-    const top = vm.contentTop, h = vm.contentBottom - top;
-    const cols = vm.page === 'menu' && vm.actions.length > 4 && vm.actions.length <= 6 ? 3 : 2;
-    const width = (1552 - (cols - 1) * 16) / cols, rows = Math.ceil(vm.actions.length / cols);
-    const height = (h - 12 * (rows - 1)) / Math.max(1, rows);
-    vm.actions.forEach((action, i) => {
-        const rect = { x: 24 + i % cols * (width + 16), y: top + Math.floor(i / cols) * (height + 12), w: width, h: height };
-        selectable(cv, t, rect, vm.focus === i);
-        const titleY = rect.y + Math.min(56, height * 0.36), size = height < 120 ? 16 : 19;
-        label(cv, action.label, rect.x + 26, titleY, width - 52, height < 120 ? 23 : 30, action.enabled === false ? t.dim : t.text, { font: 'bold' });
-        const lines = [''];
-        (action.description || '').split(' ').forEach((word) => {
-            const last = lines.length - 1, candidate = lines[last] ? lines[last] + ' ' + word : word;
-            if (lines[last] && cv.textWidth(candidate, size) > width - 52 && last === 0) lines.push(word);
-            else lines[last] = candidate;
-        });
-        lines.forEach((line, index) => label(cv, line, rect.x + 26, titleY + size + 12 + index * (size + 4), width - 52, size, t.dim));
-        target(cv, vm, action, i, rect, vm.page);
-    });
 }
 function edit(cv, t, vm) {
     const d = vm.draft, value = d[d.field], start = Math.max(0, d.caret - 43), shown = value.slice(start, d.caret) + '|' + value.slice(d.caret, d.caret + 40);
@@ -381,9 +389,8 @@ function draw(ctx, vm) {
     const cv = ctx.canvas(W, H), t = ctx.theme();
     cv.targets = [];
     cv.clear(t.bg);
-    const tabs = ['Trip', 'Elevation', 'Fuel', 'Gears', 'History'];
-    const selected = vm.page === 'records' ? 4 : ['menu', 'actions', 'edit'].includes(vm.page) ? 0 :
-        ['trip', 'elevation', 'fuel', 'gears', 'history'].indexOf(vm.page);
+    const tabs = ['Trip', 'Elevation', 'Fuel', 'Gears', 'History', 'Records'];
+    const selected = vm.page === 'edit' ? 0 : ['trip', 'elevation', 'fuel', 'gears', 'history', 'records'].indexOf(vm.page);
     const badges = [];
     if (vm.demo) badges.push({ text: 'DEMO', color: blue });
     else if (vm.currentTrip) badges.push({ text: vm.currentTrip.status === 'recording' ? 'REC' : 'INTERRUPTED', color: vm.currentTrip.status === 'recording' ? red : t.warn });
@@ -391,19 +398,27 @@ function draw(ctx, vm) {
     G.frame(cv, t, tabs, selected, badges);
     const full = cv.chrome && cv.place && cv.place.full;
     const top = full ? (FULL.headH - cv.place.oy) / cv.place.scale + 8 : G.TOP;
-    const bottom = full ? (cv.place.h - FULL.barH - cv.place.oy) / cv.place.scale - 8 : H - 8;
-    vm = Object.assign({}, vm, { contentTop: top + 28, contentBottom: bottom - (vm.notice ? 24 : 0) });
-    const title = vm.page === 'records' ? 'Cross-trip records' : vm.page === 'history' ? 'Trip history' : vm.page === 'menu' ? 'Trip Data' : vm.page === 'edit' ? 'Edit saved trip' :
-        vm.saved ? vm.trip.name + ' / ' + V.date(vm.trip.startedAt) : 'Current trip' + (vm.trip ? ' / ' + V.date(vm.trip.startedAt) : '');
-    label(cv, title, 24, top + 18, 1230, 17, t.dim);
-    label(cv, vm.busy ? 'Working...' : vm.demo ? 'DEMO / MEMORY ONLY' : vm.page === 'trip' && vm.trip ? (vm.saved && vm.trip.status !== 'finished' ? 'INTERRUPTED' : vm.trip.status.toUpperCase()) : 'M850i / US', RIGHT, top + 18, 280, 16, t.dim, { align: 'right' });
-    if (vm.page === 'trip') trip(cv, t, vm);
+    const barHeight = cv.own ? 0 : FULL.barH;
+    const bottom = full ? (cv.place.h - barHeight - cv.place.oy) / cv.place.scale - 8 : H - 8;
+    const tripPage = vm.page === 'trip';
+    const headingHeight = !tripPage || vm.saved ? 28 : 0;
+    vm = Object.assign({}, vm, { contentTop: top + headingHeight, contentBottom: bottom - (vm.notice ? 24 : 0) });
+    if (!tripPage) {
+        const title = vm.page === 'records' ? 'Cross-trip records' : vm.page === 'history' ? 'Trip history' : vm.page === 'edit' ? 'Edit saved trip' :
+            vm.saved ? vm.trip.name + ' / ' + V.date(vm.trip.startedAt) : 'Current trip' + (vm.trip ? ' / ' + V.date(vm.trip.startedAt) : '');
+        label(cv, title, 24, top + 18, 1230, 17, t.dim);
+        label(cv, vm.busy ? 'Working...' : vm.demo ? 'DEMO / MEMORY ONLY' : 'M850i / US', RIGHT, top + 18, 280, 16, t.dim, { align: 'right' });
+    } else if (vm.saved) {
+        label(cv, vm.trip.name, 24, top + 18, 1230, 17, t.dim);
+        const status = vm.busy ? 'Working...' : vm.trip.status !== 'finished' ? 'INTERRUPTED' : '';
+        if (status) label(cv, status, RIGHT, top + 18, 280, 16, t.dim, { align: 'right' });
+    }
+    if (tripPage) trip(cv, t, vm);
     else if (vm.page === 'elevation') elevation(cv, t, vm);
     else if (vm.page === 'fuel') fuel(cv, t, vm);
     else if (vm.page === 'gears') gears(cv, t, vm);
     else if (vm.page === 'history') history(cv, t, vm);
     else if (vm.page === 'records') records(cv, t, vm);
-    else if (vm.page === 'menu' || vm.page === 'actions') menu(cv, t, vm);
     else if (vm.page === 'edit') edit(cv, t, vm);
     if (vm.notice) label(cv, vm.notice, 24, bottom - 4, 1552, 16, t.warn);
     if (vm.modal) modal(cv, t, vm);

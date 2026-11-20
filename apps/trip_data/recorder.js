@@ -93,8 +93,8 @@ class Recorder {
         try { this.storage.save(summary); } catch (e) {
             summary.status = 'interrupted'; this.error = 'Could not checkpoint recording start: ' + e.message; throw e;
         }
-        this.sources.start();
-        this.timer = setInterval(() => this.tick(), summary.policy.sampleMs);
+        this.sources.takeRpmPeak(); this.sources.start();
+        this.timer = setInterval(() => this.tick(), C.SAMPLE_MS);
         if (this.timer.unref) this.timer.unref();
         this.tick();
         if (this.active.status !== 'recording') throw new Error(this.active.interruptionReason || this.error);
@@ -136,7 +136,7 @@ class Recorder {
             const gap = Math.max(0, Date.now() - (s.lastWallAt || s.startedAt));
             s.gaps.push({ after: s.lastWallAt || s.startedAt, before: Date.now(), wallMs: gap,
                 reason: 'Process interruption; no measurements inferred',
-                resumedSources: DEFINITIONS, resumedSourceNotes: NOTES,
+                resumedSources: DEFINITIONS, resumedSourceNotes: NOTES, resumedSampleMs: C.SAMPLE_MS,
                 resumedEngineSessionPolicy: this.settings.automatic ? Object.assign({}, ENGINE_SESSION) : null });
             s.missingWallMs += gap;
             try { this.begin(s, rebuilt.last); } catch (e) { this.fail(e); throw e; }
@@ -150,7 +150,9 @@ class Recorder {
         try {
             const now = mono(), s = this.active;
             const row = { schemaVersion: 2, segment: this.segment, recordedMs: this.segmentBase + Math.max(0, now - this.segmentMono),
-                wallAt: Date.now(), values: this.sources.sample(now) };
+                wallAt: Date.now(), values: this.sources.sample(now, s.policy.calculationVersion === 2) };
+            const peak = this.sources.takeRpmPeak();
+            if (peak !== null) row.values.rpm.peak = peak;
             row.elapsedMs = row.recordedMs + s.missingWallMs;
             const interval = C.accept(s.stats, this.previous, row, s.policy);
             row.distanceMiles = interval.distance !== null ? s.stats.distanceMiles : null;

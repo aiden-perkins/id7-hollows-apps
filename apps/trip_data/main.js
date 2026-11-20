@@ -1,7 +1,7 @@
 'use strict';
 const mgu = require('./kit/mgu');
 const { Diag } = require('./kit/diag');
-const { Storage } = require('./storage');
+const { Storage, bulkDeletable } = require('./storage');
 const { Sources, mono } = require('./sources');
 const { Recorder } = require('./recorder');
 const V = require('./view');
@@ -21,28 +21,32 @@ mgu.run({
         let demo = ctx.settings.get('demo') === 'on' ? new Demo(recorder.settings) : null;
         const state = {
             page: ctx.settings.get('section') || 'trip', saved: null, focus: 0, focusMemory: {}, modal: null, draft: null,
-            history: [], historyPage: 0, records: [], recordsPage: 0, followAutomatic: true, tablePages: { fuel: 0 }, tableCoverage: { fuel: false, gears: false }, projection: null, projectionId: null,
+            history: [], historyPage: 0, historySelection: null, records: [], recordsPage: 0, followAutomatic: true, tablePages: { fuel: 0 }, tableCoverage: { fuel: false, gears: false }, projection: null, projectionId: null,
             graphLoading: false, loadingId: null, graphRequest: 0, notice: '', noticeUntil: 0, usageBytes: null,
             graph: { metric: 'speed', axis: 'time', zoomSeconds: 0, cursorAt: null },
         };
-        const pages = ['trip', 'elevation', 'fuel', 'gears', 'history'];
+        const pages = ['trip', 'elevation', 'fuel', 'gears', 'history', 'records'];
         const selectedTrip = () => state.saved || (demo ? demo.trip : recorder.active);
-        const focusKey = () => ['history', 'records', 'menu', 'edit', 'actions'].includes(state.page) ? state.page :
+        const focusKey = () => ['history', 'records', 'edit'].includes(state.page) ? state.page :
             state.page + ':' + (state.saved ? state.saved.id : 'current');
         const tell = (message) => { state.notice = message; state.noticeUntil = Date.now() + 7000; changed(); };
         const action = (id, label, run, enabled, description) => ({ id, label, run, enabled: enabled !== false, description: description || '' });
-        function route(page) {
+        function route(page, saved = state.saved) {
             state.focusMemory[focusKey()] = state.focus;
-            state.page = page;
+            if (page !== 'history') state.historySelection = null;
+            state.page = page; state.saved = saved;
             state.focus = state.focusMemory[focusKey()] || 0;
             changed();
         }
         async function refreshHistory() {
             if (demo) { state.history = [demo.saved]; state.records = V.records(state.history); changed(); return; }
-            state.history = storage.history().filter((s) => !recorder.active || recorder.active.id !== s.id);
+            recorder.history = storage.history();
+            state.history = recorder.history.filter((s) => !recorder.active || recorder.active.id !== s.id);
+            if (state.historySelection) {
+                state.historySelection = new Set(state.history.filter((s) => bulkDeletable(s) && state.historySelection.has(s.id)).map((s) => s.id));
+            }
             state.historyPage = Math.min(state.historyPage, Math.max(0, Math.ceil(state.history.length / 4) - 1));
             state.records = V.records(state.history);
-            recorder.history = storage.history();
             recorder.interrupted = recorder.history.filter((s) => s.status !== 'finished' && (!recorder.active || s.id !== recorder.active.id));
             state.usageBytes = storage.usage();
             changed();
@@ -70,17 +74,19 @@ mgu.run({
             }
         }
         async function openPage(page) {
-            route(page);
+            if (state.saved && [page, state.page].some((p) => p === 'history' || p === 'records')) {
+                resetProjection(); state.followAutomatic = true; route(page, null);
+            } else route(page);
             if (page === 'history' || page === 'records') await refreshHistory();
-            if (['trip', 'elevation', 'fuel'].includes(page)) await loadProjection();
+            if (['trip', 'elevation', 'fuel', 'gears'].includes(page)) await loadProjection();
         }
         async function showCurrent() {
             if (state.saved) resetProjection();
-            state.saved = null; state.followAutomatic = true; route('trip'); await loadProjection();
+            state.followAutomatic = true; route('trip', null); await loadProjection();
         }
         async function showSaved(trip) {
             if (!state.saved || state.saved.id !== trip.id) resetProjection();
-            state.saved = trip; state.followAutomatic = false; route('trip'); await loadProjection();
+            state.followAutomatic = false; route('trip', trip); await loadProjection();
         }
         async function settings() {
             if (busy) return;
@@ -94,8 +100,8 @@ mgu.run({
             try { await fn(); } finally { busy = false; changed(); }
         }
         async function start() {
-            recorder.start(); state.saved = null; state.followAutomatic = true;
-            resetProjection(); route('trip'); await loadProjection(); tell('Recording started');
+            recorder.start(); state.followAutomatic = true;
+            resetProjection(); route('trip', null); await loadProjection(); tell('Recording started');
         }
         async function finish() {
             const trip = recorder.finish('manual');
@@ -105,8 +111,8 @@ mgu.run({
         }
         async function recover() {
             const id = state.saved && state.saved.id; if (!id) return;
-            await recorder.recover(id); state.saved = null; state.followAutomatic = true;
-            resetProjection(); route('trip'); await loadProjection();
+            await recorder.recover(id); state.followAutomatic = true;
+            resetProjection(); route('trip', null); await loadProjection();
             tell('Trip recovered. The missing interval remains a gap.');
         }
         async function closeInterrupted() {
@@ -124,10 +130,63 @@ mgu.run({
                 actions: [action('cancel', 'Cancel', () => { state.modal = null; changed(); }),
                     action('delete', 'Delete trip', () => exclusive(async () => {
                         if (recorder.active && recorder.active.id === target.id) throw new Error('Cannot delete the active trip');
-                        storage.delete(target.id); state.modal = null; state.saved = null; resetProjection();
-                        await refreshHistory(); route('history'); tell('Saved trip deleted');
+                        storage.delete(target.id); state.modal = null; resetProjection();
+                        state.followAutomatic = true; route('history', null);
+                        await refreshHistory(); tell('Saved trip deleted');
                     }))] };
             changed();
+        }
+        async function toggleFavorite() {
+            const trip = state.saved;
+            if (!trip || trip.demo || recorder.active && recorder.active.id === trip.id) return;
+            state.saved = storage.setFavorite(trip.id, !trip.favorite);
+            await refreshHistory();
+            tell(state.saved.favorite ? 'Trip added to favorites' : 'Trip removed from favorites');
+        }
+        function confirmBulkDelete(trips, selected) {
+            if (!trips.length) return;
+            const ids = trips.map((trip) => trip.id);
+            state.notice = ''; state.noticeUntil = 0;
+            state.modal = {
+                title: selected ? 'Delete selected trips?' : 'Delete all unfavorited trips?',
+                message: ids.length + (ids.length === 1 ? ' trip will be permanently deleted.' : ' trips will be permanently deleted.'),
+                detail: 'Favorites and in-progress recordings are protected.', focus: 0,
+                actions: [action('cancel', 'Cancel', () => { state.modal = null; changed(); }),
+                    action('deleteMany', 'Delete trips', () => exclusive(async () => {
+                        const eligibleIds = ids.filter((id) => !recorder.active || recorder.active.id !== id);
+                        const result = storage.deleteMany(eligibleIds);
+                        result.failures.forEach((error) => ctx.log.warn(error));
+                        state.modal = null; state.historySelection = null;
+                        await refreshHistory(); state.focus = state.historyPage * 4;
+                        const skipped = ids.length - result.deleted;
+                        tell('Deleted ' + result.deleted + (result.deleted === 1 ? ' trip' : ' trips') +
+                            (skipped ? '. ' + skipped + ' could not be deleted.' : '.'));
+                    }))],
+            };
+            changed();
+        }
+        function historyActions() {
+            const selection = state.historySelection;
+            const rows = state.history.map((trip) => {
+                if (!selection) return action(trip.id, trip.name, () => showSaved(trip));
+                return action('select:' + trip.id, trip.name, () => {
+                    if (selection.has(trip.id)) selection.delete(trip.id); else selection.add(trip.id);
+                }, bulkDeletable(trip), 'This trip is protected from bulk deletion.');
+            });
+            if (demo || !state.history.length) return rows;
+            const eligible = state.history.filter(bulkDeletable);
+            if (selection) {
+                const selected = eligible.filter((trip) => selection.has(trip.id));
+                return rows.concat([
+                    action('cancelSelection', 'Cancel selection', () => { state.historySelection = null; state.focus = state.historyPage * 4; }),
+                    action('deleteSelected', 'Delete selected (' + selected.length + ')', () => confirmBulkDelete(selected, true), selected.length > 0, 'Select one or more trips.'),
+                ]);
+            }
+            if (!eligible.length) return rows;
+            return rows.concat([
+                action('selectTrips', 'Select trips', () => { state.historySelection = new Set(); state.focus = state.historyPage * 4; }),
+                action('deleteUnfavorited', 'Delete unfavorited', () => confirmBulkDelete(eligible, false)),
+            ]);
         }
         function edit() {
             const trip = state.saved;
@@ -168,22 +227,29 @@ mgu.run({
         }
         function pageActions() {
             const saved = state.saved, active = recorder.active;
-            if (state.page === 'history') return state.history.map((s) => action(s.id, s.name, () => showSaved(s)));
+            if (state.page === 'history') return historyActions();
             if (state.page === 'records') return state.records.map((record) => action(record.id, record.label,
                 () => showSaved(record.trip), !!record.trip, record.detail));
-            if (state.page === 'menu') return [
-                action('current', 'Current trip', showCurrent, true, active ? 'Recording / ' + V.duration(active.stats.durationMs) : 'Start and review your current drive'),
-                action('history', 'Trip history', () => openPage('history'), true, 'Saved trips, notes and recovery'),
-                action('records', 'History records', () => openPage('records'), true, 'Observed speed, elevation, distance and economy records'),
-                action('settings', 'Settings', settings, true, 'Recording detail, units and presentation'),
-            ];
-            if (state.page === 'actions') return [
-                action('edit', 'Rename / annotate', edit, !!saved && saved.status === 'finished', 'Edit the saved trip with the graphical keyboard'),
-                action('delete', 'Delete saved trip', confirmDelete, !!saved && saved.status === 'finished', 'Review and confirm before deleting'),
-                action('recover', 'Recover recording', () => exclusive(recover), !!saved && saved.status !== 'finished' &&
-                    [2, 3, 4].includes(saved.policy.calculationVersion) && !active, 'Continue with this trip\'s recorded calculation policy and an explicit missing interval'),
-                action('close', 'Close interrupted trip', () => exclusive(closeInterrupted), !!saved && saved.status !== 'finished' && !active, 'Keep only the samples already recorded'),
-            ];
+            if (state.page === 'trip') {
+                if (!saved) {
+                    const recording = active && active.status === 'recording';
+                    return [action(recording ? 'finish' : 'start', recording ? 'Finish trip' : 'Start trip',
+                        () => exclusive(recording ? finish : start), !demo, 'Turn off Demo data in Settings to record a trip.')];
+                }
+                if (saved.demo) return [];
+                const favorite = action('favorite', saved.favorite ? 'Remove favorite' : 'Favorite trip', () => exclusive(toggleFavorite));
+                if (saved.status === 'finished') return [
+                    favorite,
+                    action('edit', 'Rename / annotate', edit),
+                    action('delete', 'Delete saved trip', confirmDelete),
+                ];
+                return [
+                    favorite,
+                    action('recover', 'Recover recording', () => exclusive(recover), [2, 3, 4].includes(saved.policy.calculationVersion) && !active,
+                        active ? 'Finish the active trip first.' : 'This recording can be closed at the last saved sample.'),
+                    action('close', 'Close interrupted trip', () => exclusive(closeInterrupted), !active, 'Finish the active trip first.'),
+                ];
+            }
             if (state.page === 'elevation') return [];
             const columns = () => action('columns', state.tableCoverage[state.page] ? 'Columns: Coverage' : 'Columns: Totals', () => {
                 state.tableCoverage[state.page] = !state.tableCoverage[state.page]; changed();
@@ -197,12 +263,13 @@ mgu.run({
             if (state.page === 'edit') return keyboard();
             return [];
         }
-        function availableActions() { return pageActions(); }
-        async function activate(index) {
-            if (busy || Date.now() - lastSelect < 160) return;
+        async function activate(index, id, page, tripId) {
+            if (busy || Date.now() - lastSelect < 160 || page !== (state.modal ? 'modal' : state.page)) return;
+            const trip = selectedTrip();
+            if (page === 'trip' && tripId !== (trip && trip.id)) return;
+            const list = state.modal ? state.modal.actions : pageActions();
+            const chosen = list[index]; if (!chosen || chosen.id !== id) return;
             lastSelect = Date.now();
-            const list = state.modal ? state.modal.actions : availableActions();
-            const chosen = list[index]; if (!chosen) return;
             if (state.modal) state.modal.focus = index;
             else state.focus = index;
             if (!chosen.enabled) {
@@ -224,34 +291,19 @@ mgu.run({
             state.recordsPage = Math.max(0, Math.min(count - 1, state.recordsPage + delta));
             state.focus = state.recordsPage * 2; changed();
         }
-        function back() {
-            if (busy) return;
-            if (state.modal) { state.modal = null; changed(); return; }
-            if (state.page === 'edit') { state.draft = null; route('trip'); return; }
-            if (state.page === 'records') { route('history'); return; }
-            if (['elevation', 'fuel', 'gears', 'actions'].includes(state.page)) { route('trip'); return; }
-            if (state.page === 'trip' && state.saved) { route('history'); return; }
-            if (state.page === 'menu') return showCurrent();
-            route('menu');
-        }
         const bind = (name, fn) => ui.onClick(name, async () => {
             try { await fn(); } catch (e) { tell(e.message); ctx.log.warn(e); }
             if (ui.isVisible('SETTINGS')) refreshSettings();
             changed();
         });
+        let fallbackRecord = null;
+        // Standard and software layouts use the native button when they cannot activate canvas controls.
+        if (ctx.hideButton) ctx.hideButton('BTN_RECORD');
         bind('BTN_RECORD', () => {
-            if (state.modal || state.page === 'edit') { tell('Close this dialog before changing recording.'); return; }
-            if (demo) { tell('Turn off Demo data in Settings to record a trip.'); return; }
-            return exclusive(recorder.active && recorder.active.status === 'recording' ? finish : start);
+            if (busy || state.modal || state.page === 'edit' || ctx.display.own()) return;
+            if (fallbackRecord) return activate(0, fallbackRecord.id, 'trip', fallbackRecord.tripId);
+            return showCurrent();
         });
-        bind('BTN_CURRENT', () => {
-            if (!busy && !state.modal && state.page !== 'edit') return showCurrent();
-        });
-        bind('BTN_OPTIONS', () => {
-            if (busy || state.modal || state.page === 'edit') return;
-            route(state.saved && ['trip', 'elevation', 'fuel', 'gears'].includes(state.page) ? 'actions' : 'menu');
-        });
-        bind('BTN_BACK', back);
         bind('BTN_SETTINGS', settings);
         const labels = {};
         function nativeText(name, value) { if (labels[name] !== value) { labels[name] = value; ui.text(name, value); } }
@@ -261,9 +313,7 @@ mgu.run({
             const age = (ms) => Number.isFinite(ms) ? V.number(ms / 1000, 's') : 'unknown';
             const gpsStatus = sources.mode === 'full' ? 'GPS ' + (gps.positionState || gps.state) +
                 ': fix age ' + age(gps.fixAgeMs) + ', receipt age ' + age(gps.ageMs) : 'GPS position/elevation collects while recording';
-            nativeText('PREF_DETAIL', 'Recording interval: ' + p.sampleMs + ' ms (fixed per trip)');
             nativeText('PREF_AUTO', 'Automatic engine-session recording: ' + recorder.automaticStatus());
-            nativeText('PREF_ALTITUDE', 'Elevation noise deadband: ' + p.altitudeThresholdFt + ' ft');
             nativeText('PREF_SMOOTH', 'Display graph smoothing: ' + (p.smoothing ? 'on' : 'off'));
             nativeText('PREF_BANDS', 'New trips: 0-10 mph, then 10 mph bands to 200 mph; 200+ and unknown remain separate. Saved trips retain their recorded bands.');
             nativeText('PREF_STORAGE', 'Trip storage: ' + (state.usageBytes === null ? '--' : (state.usageBytes / 1048576).toFixed(3)) + ' MiB' +
@@ -274,16 +324,13 @@ mgu.run({
                     'New trips use vehicle-speed distance and CDS engine status. ' + gpsStatus +
                     '. GPS reference/accuracy unverified. Engine sessions are not ignition; stop/start may split trips. App must be running. Fuel uses DME diagnostics and the calibrated CDS injection counter when supported.'));
         }
-        const setting = (name, key, options) => bind(name, () => {
-            const value = recorder.settings[key], next = options ? options[(options.indexOf(value) + 1) % options.length] : !value;
-            recorder.configure(key, next);
+        const setting = (name, key) => bind(name, () => {
+            recorder.configure(key, !recorder.settings[key]);
             Object.assign(ctx.settings.values, recorder.settings);
             refreshSettings();
         });
-        setting('PREF_DETAIL', 'sampleMs', [500, 1000, 2000]); setting('PREF_AUTO', 'automatic');
-        setting('PREF_ALTITUDE', 'altitudeThresholdFt', [5, 10, 20]); setting('PREF_SMOOTH', 'smoothing');
+        setting('PREF_AUTO', 'automatic'); setting('PREF_SMOOTH', 'smoothing');
         bind('PREF_RETRY', () => { recorder.retrySources(); tell('Retrying vehicle providers'); refreshSettings(); });
-        bind('PREF_BACK', () => ui.open('MAIN'));
         bind('PREF_DEMO', () => {
             if (busy || recorder.active) { tell('Finish the recording before changing demo mode.'); return; }
             ctx.settings.set('demo', demo ? 'off' : 'on');
@@ -298,15 +345,16 @@ mgu.run({
             }
             demo = enabled ? new Demo(recorder.settings) : null;
             recorder.setAutomaticEnabled(!demo && !ctx.preview);
-            state.saved = null; state.followAutomatic = true; state.modal = null; state.draft = null;
-            resetProjection(); route('trip');
+            state.followAutomatic = true; state.modal = null; state.draft = null;
+            resetProjection(); route('trip', null);
             Promise.resolve(refreshHistory()).then(loadProjection).catch((e) => tell(e.message));
             refreshSettings(); changed();
         });
         if (ctx.onTab) ctx.onTab((index) => {
-            if (!busy && !state.modal && state.page !== 'edit' && pages[index]) {
-                openPage(pages[index]).catch((e) => tell(e.message));
-            }
+            const page = pages[index];
+            if (busy || state.modal || state.page === 'edit' || !page) return;
+            const open = page === 'trip' && state.page === 'trip' && state.saved ? showCurrent() : openPage(page);
+            open.catch((e) => tell(e.message));
         });
         ui.onVisible((name, visible) => {
             if (name === 'SETTINGS' && visible) refreshSettings();
@@ -346,7 +394,7 @@ mgu.run({
             if (trip && recorder.active && trip.id === recorder.active.id && state.projectionId === trip.id && state.projection) {
                 recorder.recent.forEach((row) => state.projection.add(row));
             }
-            const actions = availableActions();
+            const actions = pageActions();
             state.focus = Math.max(0, Math.min(state.focus, Math.max(0, actions.length - 1)));
             const errors = storage.errors.concat(storage.historyErrors || []);
             const notice = recorder.error || (state.noticeUntil > now ? state.notice : '') || (errors.length ? errors[0] : '') ||
@@ -359,8 +407,11 @@ mgu.run({
                 activate, historyPageSize: 4, changeHistoryPage, changeRecordsPage,
                 projection: trip && state.projectionId === trip.id ? state.projection : null,
             });
-            nativeText('BTN_RECORD', recorder.active && recorder.active.status === 'recording' ? 'Finish trip' : 'Start trip');
-            await ui.image('MAIN_GFX', Dashboard.draw(ctx, vm));
+            const frame = Dashboard.draw(ctx, vm);
+            const record = !frame.own && state.page === 'trip' && !state.saved ? actions[0] : null;
+            fallbackRecord = record ? { id: record.id, tripId: trip && trip.id } : null;
+            if (!frame.own) nativeText('BTN_RECORD', record ? record.label : 'Trip');
+            await ui.image('MAIN_GFX', frame);
         });
         refreshSettings(); changed();
     },

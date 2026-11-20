@@ -1,5 +1,9 @@
 'use strict';
 
+const SAMPLE_MS = 100, ALTITUDE_DEADBAND_FT = 10;
+const HEIGHT_WINDOW_MS = 5000, MIN_HEIGHT_SPAN_MS = 3000;
+const heightWindows = new WeakMap();
+
 function bucket() { return { durationMs: 0, distanceMiles: 0, distanceMs: 0, fuelGallons: 0, fuelMs: 0, matchedMiles: 0, matchedGallons: 0, matchedMs: 0, shifts: 0 }; }
 function create(policy) {
     const stats = { durationMs: 0, samples: 0, distanceMiles: 0, speedMs: 0, movingMs: 0, movingMiles: 0, topSpeed: null,
@@ -16,10 +20,39 @@ function create(policy) {
     return stats;
 }
 const live = (v) => v && v.state === 'live' && Number.isFinite(v.value);
+const validRpm = (rpm) => Number.isFinite(rpm) && rpm >= 0 && rpm < 12000;
+const liveRpm = (rpm) => live(rpm) && validRpm(rpm.value);
 function paired(a, b) { return live(a) && live(b) && a.epoch === b.epoch; }
 function extrema(stats, value) {
     stats.min = stats.min === null ? value : Math.min(stats.min, value);
     stats.max = stats.max === null ? value : Math.max(stats.max, value);
+}
+function rpmPeak(sample) {
+    const current = liveRpm(sample) ? sample.value : null;
+    return sample && validRpm(sample.peak) ? Math.max(current === null ? 0 : current, sample.peak) : current;
+}
+function trackRpm(stats, sample) {
+    if (liveRpm(sample)) extrema(stats, sample.value);
+    const peak = rpmPeak(sample);
+    if (peak !== null && (stats.max === null || peak > stats.max)) stats.max = peak;
+}
+function verticalSpeed(fixes, row, continuous) {
+    const gps = row.values.gps, at = gps.fixTimeMs, altitude = gps.altitudeFt;
+    const valid = gps.state === 'live' && Number.isFinite(altitude) && Number.isFinite(at) &&
+        row.wallAt - at <= HEIGHT_WINDOW_MS && at - row.wallAt <= 2000;
+    const last = fixes[fixes.length - 1];
+    if (!continuous || !valid || last && (last.epoch !== gps.epoch || last.heightEpoch !== gps.heightEpoch ||
+        at < last.at || at - last.at > HEIGHT_WINDOW_MS)) fixes.length = 0;
+    if (!valid) return null;
+    if (!fixes.length || at > last.at) fixes.push({ at, altitude, epoch: gps.epoch, heightEpoch: gps.heightEpoch });
+    while (at - fixes[0].at > HEIGHT_WINDOW_MS) fixes.shift();
+    const span = at - fixes[0].at;
+    return span >= MIN_HEIGHT_SPAN_MS ? (fixes[fixes.length - 1].altitude - fixes[0].altitude) * 60000 / span : null;
+}
+function updateVerticalSpeed(stats, row, continuous) {
+    let window = heightWindows.get(stats);
+    if (!window) { window = []; heightWindows.set(stats, window); }
+    stats.altitude.verticalFpm = verticalSpeed(window, row, continuous);
 }
 function acceptLegacy(stats, previous, row, policy) {
     const values = row.values, old = previous && previous.values;
@@ -30,10 +63,10 @@ function acceptLegacy(stats, previous, row, policy) {
         a.end = altitude; extrema(a, altitude);
     }
     if (live(values.speed)) stats.topSpeed = stats.topSpeed === null ? values.speed.value : Math.max(stats.topSpeed, values.speed.value);
-    if (live(values.rpm)) extrema(stats.rpm, values.rpm.value);
+    trackRpm(stats.rpm, values.rpm);
     const dt = previous ? row.recordedMs - previous.recordedMs : row.recordedMs;
     const continuous = !!previous && previous.segment === row.segment && dt > 0 && dt <= policy.maxIntervalMs;
-    stats.altitude.verticalFpm = null;
+    updateVerticalSpeed(stats, row, continuous);
     if (!continuous) {
         stats.altitude.anchor = altitude;
         if (dt > 0) { stats.gears.unknown.durationMs += dt; stats.bands[stats.bands.length - 1].durationMs += dt; }
@@ -76,7 +109,7 @@ function acceptLegacy(stats, previous, row, policy) {
             [target, band].forEach((b) => { b.matchedMiles += distance; b.matchedGallons += fuel; b.matchedMs += dt; });
         }
     }
-    if (paired(old.rpm, values.rpm)) {
+    if (liveRpm(old.rpm) && liveRpm(values.rpm) && old.rpm.epoch === values.rpm.epoch) {
         stats.rpm.rpmMs += (old.rpm.value + values.rpm.value) / 2 * dt; stats.rpm.coverageMs += dt;
     }
     const oldGPS = old.gps, gps = values.gps;
@@ -90,7 +123,6 @@ function acceptLegacy(stats, previous, row, policy) {
                 if (delta > 0) a.ascent += delta; else a.descent -= delta;
                 a.anchor = altitude;
             }
-            a.verticalFpm = (altitude - oldGPS.altitudeFt) * 60000 / dt;
         } else stats.altitude.anchor = altitude;
     } else stats.altitude.anchor = altitude;
     return { distance, fuel, dt, continuous: true };
@@ -186,10 +218,10 @@ function acceptCurrent(stats, previous, row, policy) {
         a.end = altitude; extrema(a, altitude);
     }
     if (live(values.speed)) stats.topSpeed = stats.topSpeed === null ? values.speed.value : Math.max(stats.topSpeed, values.speed.value);
-    if (live(values.rpm)) extrema(stats.rpm, values.rpm.value);
+    trackRpm(stats.rpm, values.rpm);
     const dt = previous ? row.recordedMs - previous.recordedMs : row.recordedMs;
     const continuous = !!previous && previous.segment === row.segment && dt > 0 && dt <= policy.maxIntervalMs;
-    stats.altitude.verticalFpm = null;
+    updateVerticalSpeed(stats, row, continuous);
     if (!continuous) {
         stats.altitude.anchor = altitude;
         if (policy.calculationVersion === 4) stats.economyWindow = [];
@@ -214,7 +246,7 @@ function acceptCurrent(stats, previous, row, policy) {
         band = index < 0 ? stats.bands.length - 2 : index;
     }
     stats.bands[band].durationMs += dt;
-    if (paired(old.rpm, values.rpm)) {
+    if (liveRpm(old.rpm) && liveRpm(values.rpm) && old.rpm.epoch === values.rpm.epoch) {
         stats.rpm.rpmMs += (old.rpm.value + values.rpm.value) / 2 * dt; stats.rpm.coverageMs += dt;
     }
     const oldGPS = old.gps, gps = values.gps;
@@ -228,7 +260,6 @@ function acceptCurrent(stats, previous, row, policy) {
                 if (delta > 0) a.ascent += delta; else a.descent -= delta;
                 a.anchor = altitude;
             }
-            a.verticalFpm = (altitude - oldGPS.altitudeFt) * 60000 / dt;
         } else stats.altitude.anchor = altitude;
     } else stats.altitude.anchor = altitude;
     let intervals;
@@ -296,8 +327,8 @@ function accept(stats, previous, row, policy) {
     throw new Error('Unsupported calculation policy');
 }
 function policy(settings) {
-    return { calculationVersion: 4, sampleMs: settings.sampleMs, movingMph: 1,
-        maxIntervalMs: Math.max(5000, settings.sampleMs * 3), altitudeThresholdFt: settings.altitudeThresholdFt,
+    return { calculationVersion: 4, sampleMs: SAMPLE_MS, movingMph: 1,
+        maxIntervalMs: 5000, altitudeThresholdFt: ALTITUDE_DEADBAND_FT,
         speedBands: settings.speedBands.slice(), rollingMpgSeconds: 60,
         distance: 'Trapezoidal integration of live Vehicle2.statusCarSpeed2 in mph over bounded monotonic sample intervals, as upstream trip computers integrate vehicle speed. GPS is not required for distance.',
         distanceTiming: 'Both endpoint speeds must be live and from the same provider epoch, with no recording-segment change or interval over the configured gap limit. Missing/stale data and interruptions contribute no distance or coverage. Getter cadence is not a sensor-rate claim.',
@@ -309,11 +340,11 @@ function policy(settings) {
         fuelEconomy: 'Rolling 60-second MPG is summed matched miles / summed matched gallons, reset at missing coverage or a source/epoch/recording break. A boundary interval is time-prorated; individual MPG readings are never averaged.',
         context: 'First and last live odometer (miles) and tank (US gallons) values retain their sources as optional context only. Neither tank differences nor odometer differences derive consumption or trip distance.',
         gear: 'Previous valid connected state holds for each bounded interval; actual gearbox precedes explicit selector fallback. Count direct forward 1–10 changes only within one source/connection; gaps, source changes and P/R/N/NP do not count as shifts.',
-        elevation: 'First/last accepted altitude; ascent/descent use a deadband anchor, reset at gaps. Vertical speed is an unsmoothed adjacent-sample estimate.',
+        elevation: 'First/last accepted altitude; ascent/descent use a deadband anchor, reset at gaps. Vertical speed uses distinct UTC-stamped GPS heights over a 3–5 second window.',
         duration: 'Monotonic recorded duration includes stationary periods and in-process sample gaps; recovery downtime is separate.',
         capabilities: { speed: true, rpm: true, engine: true, fuel: true, ignition: false, gps: true,
             fuelUnit: 'US gal/h', fuelTotalUnit: 'US gal', fuelCoverage: 'Only live same-source, same-epoch endpoint pairs; unavailable data is not zero',
             odometer: 'optional live miles; context only', tank: 'optional live US gallons; context only',
             gear: 'actual gearbox enum, explicit selector fallback; no guessed gears' } };
 }
-module.exports = { bucket, create, accept, policy };
+module.exports = { bucket, create, accept, policy, SAMPLE_MS, validRpm, rpmPeak, verticalSpeed };

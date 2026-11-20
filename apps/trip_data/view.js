@@ -1,4 +1,5 @@
 'use strict';
+const { rpmPeak, verticalSpeed } = require('./calculations');
 const finite = (v) => Number.isFinite(v);
 function number(v, unit) { return finite(v) ? v.toFixed(3) + (unit ? ' ' + unit : '') : 'Unavailable'; }
 function date(at) {
@@ -82,11 +83,16 @@ class Projection {
     constructor() {
         this.points = []; this.distancePoints = []; this.lastElapsed = -1; this.lastRow = null;
         this.lastDistance = null; this.distanceGap = true; this.distanceMetricGaps = {};
+        this.rpmMax = null; this.heightFixes = []; this.verticalFpm = null;
     }
     add(row) {
         if (row.elapsedMs <= this.lastElapsed) return;
         this.lastElapsed = row.elapsedMs;
         const point = project(row);
+        const peak = rpmPeak(row.values.rpm);
+        if (peak !== null) this.rpmMax = this.rpmMax === null ? peak : Math.max(this.rpmMax, peak);
+        const elapsed = this.lastRow && row.recordedMs - this.lastRow.recordedMs;
+        this.verticalFpm = verticalSpeed(this.heightFixes, row, this.lastRow && this.lastRow.segment === row.segment && elapsed > 0 && elapsed <= 5000);
         if (this.lastRow && (this.lastRow.segment !== row.segment || row.recordedMs - this.lastRow.recordedMs > 6000)) {
             ['speed', 'altitude', 'mpg', 'distance'].forEach((key) => { point.gaps[key] = true; });
         }

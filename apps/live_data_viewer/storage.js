@@ -1,20 +1,25 @@
 'use strict';
 const fs = require('fs');
 const path = require('path');
+const pages = ['driving', 'status', 'bm3'];
+function currentPage(page) {
+    if (page === 'temperatures' || page === 'health') return 'status';
+    if (page === 'dynamics') return 'driving';
+    return page;
+}
 class Storage {
     constructor(dir) { this.dir = dir; this.error = ''; this.blocked = false; this.serial = 0; }
     loadSettings() {
         const defaults = { schemaVersion: 1, units: 'US', precision: 3, dateFormat: 'US12',
-            order: ['driving', 'temperatures', 'health', 'bm3'], trendSeconds: 180, refreshMs: 100,
+            order: pages.slice(), trendSeconds: 180, refreshMs: 100,
             boostSource: 'auto', boostSeen: [], bm3Engine: 'unset' };
         try {
             const s = JSON.parse(fs.readFileSync(path.join(this.dir, 'settings.json'), 'utf8'));
+            const order = s && Array.isArray(s.order) ? Array.from(new Set(s.order.map(currentPage))) : [];
             if (!s || s.schemaVersion !== 1 || s.units !== 'US' || s.precision !== 3 || s.dateFormat !== 'US12' ||
                 ![60, 180, 600].includes(s.trendSeconds) || ![100, 250, 500, 1000, 2000].includes(s.refreshMs) ||
-                !Array.isArray(s.order) || ![3, 4, 5].includes(s.order.length) || new Set(s.order).size !== s.order.length ||
-                !s.order.every((id) => defaults.order.includes(id) || id === 'dynamics') ||
-                !['driving', 'temperatures', 'health'].every((id) => s.order.includes(id))) throw new Error('Unsupported schema or invalid preferences');
-            const order = s.order.filter((id) => id !== 'dynamics');
+                !order.every((id) => pages.includes(id)) || !order.includes('driving') || !order.includes('status'))
+                throw new Error('Unsupported schema or invalid preferences');
             if (!order.includes('bm3')) order.push('bm3');
             return Object.assign(defaults, { order, trendSeconds: s.trendSeconds, refreshMs: s.refreshMs,
                 boostSource: ['auto', 'fes', 'dme'].includes(s.boostSource) ? s.boostSource : 'auto',
@@ -43,4 +48,4 @@ class Storage {
         return 'snapshots/' + name;
     }
 }
-module.exports = { Storage };
+module.exports = { Storage, currentPage };

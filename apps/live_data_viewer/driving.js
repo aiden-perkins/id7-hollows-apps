@@ -1,47 +1,85 @@
 'use strict';
 const { C, text, get, fmt } = require('./instruments');
-const { chassis, gMeter, pedalStatus, physical } = require('./dynamics');
+const { chassis, gMeter, pedalStatus, physical, liveRaw } = require('./dynamics');
 
 const LITRES_PER_US_GALLON = 3.785411784;
 // Display reference requested for this car; not an ECU-reported capacity.
 const FUEL_CAPACITY_G = 18;
+const RPM_MAX = 7000;
+const RPM_BANDS = [
+    { start: 6000, end: 6300, color: '#f6d34f' },
+    { start: 6300, end: 6500, color: '#ff9648' },
+    { start: 6500, end: RPM_MAX, color: C.red },
+];
+const M850I_GEAR_RATIOS = [5.500, 3.520, 2.200, 1.720, 1.317, 1.000, 0.823, 0.640];
 // Fixed display references, not measured mechanical limits.
 const BARS = [
-    { id: 'rpm', label: 'RPM', unit: 'rpm', shownUnit: '', max: 8000, places: 0 },
+    { id: 'rpm', label: 'RPM', unit: 'rpm', shownUnit: '', max: RPM_MAX, places: 0 },
     { id: 'horsepower', label: 'POWER', unit: 'hp', shownUnit: 'HP', max: 1000, places: 0 },
     { id: 'torque', label: 'TORQUE', unit: 'lb-ft', shownUnit: 'lb-ft', max: 1000, places: 0 },
-    { id: 'boost', label: 'BOOST', unit: 'psi', shownUnit: 'PSI', max: 40, places: 1 },
-    { id: 'brakePressure', label: 'BRAKE', unit: 'bar', shownUnit: 'bar', max: 84, places: 1, pedal: true },
-    { id: 'accelerator', label: 'ACCEL', unit: '%', shownUnit: '%', max: 100, places: 0, pedal: true },
+    { id: 'boost', label: 'BOOST', unit: 'psi', shownUnit: 'PSI', max: 32, places: 1 },
+    { id: 'brakePressure', label: 'BRAKE', unit: 'bar', shownUnit: 'bar', max: 84, places: 1, pedal: true, rawId: 'brakeStatus' },
+    { id: 'acceleratorNative', label: 'ACCEL', unit: '%', shownUnit: '%', max: 100, places: 0, pedal: true, fallback: 'accelerator' },
 ];
+function rpmBands(cv, t, x, width, yAt, current) {
+    for (const { start, end, color } of RPM_BANDS) {
+        const top = yAt(end), bottom = yAt(start);
+        const fill = yAt(Math.max(start, Math.min(end, current.value || 0)));
+        if (fill > top) cv.fillRect(x + 3, top, width - 6, fill - top, color + '55');
+        if (fill < bottom) cv.fillRect(x + 3, fill, width - 6, bottom - fill, current.live ? color : t.dim);
+    }
+}
+function shiftMarkers(cv, t, vm, x, width, yAt, rpm) {
+    if (rpm <= 0) return;
+    const actual = get(vm, 'gear');
+    const gear = actual.state === 'live' ? actual : get(vm, 'gearSelection');
+    if (gear.state !== 'live') return;
+    const index = gear.value - 1, ratio = M850I_GEAR_RATIOS[index];
+    if (!ratio) return;
+    const markers = [
+        { next: M850I_GEAR_RATIOS[index + 1], from: x - 6, to: x + width - 4, color: '#a6e7ff' },
+        { next: M850I_GEAR_RATIOS[index - 1], from: x + 4, to: x + width + 6, color: '#ffffff' },
+    ];
+    for (const { next, from, to, color } of markers) {
+        if (!next) continue;
+        // Estimate the RPM in the adjacent ratio at the same road speed.
+        const predicted = rpm * next / ratio, y = yAt(predicted);
+        cv.line(from, y, to, y, 5, t.bg);
+        cv.line(from, y, to, y, 2, predicted > RPM_MAX ? C.red : color);
+    }
+}
 function bars(cv, t, vm, box) {
     const column = box.w / BARS.length, width = 48;
     const top = box.y + 96, bottom = box.y + box.h - 8;
     BARS.forEach((field, index) => {
         const cx = box.x + column * (index + 0.5), x = cx - width / 2;
-        const current = physical(vm, field.id, field.unit);
+        const raw = field.rawId ? liveRaw(vm, field.rawId) : null;
+        let current = raw === null ? physical(vm, field.id, field.unit) : { value: raw, live: true };
+        if (!current.live && field.fallback) {
+            const fallback = physical(vm, field.fallback, field.unit);
+            if (fallback.live || current.value === null) current = fallback;
+        }
         // Preserve signed physical samples in the model, as with the previous performance dials.
         const value = current.value === null || field.pedal ? current.value : Math.max(0, current.value);
         const color = current.live ? field.pedal ? C.cyan : C.blue : t.dim;
-        const shown = fmt(value, field.places), options = { align: 'center', font: 'num' };
+        const shown = fmt(value, raw === null ? field.places : 0), options = { align: 'center', font: 'num' };
         const size = Math.min(34, 34 * (column - 8) / Math.max(1, cv.textWidth(shown, 34, options)));
         text(cv, field.label, cx, box.y + 22, column - 4, 16, t.dim, { align: 'center', font: 'bold' });
         text(cv, shown, cx, box.y + 60, column - 8, size, color, options);
-        text(cv, field.shownUnit, cx, box.y + 83, column - 8, 17, t.dim, { align: 'center' });
+        text(cv, raw === null ? field.shownUnit : 'RAW', cx, box.y + 83, column - 8, 17, t.dim, { align: 'center' });
         cv.roundRect(x, top, width, bottom - top, 6, t.track);
-        if (value !== null) {
-            const height = (bottom - top - 6) * Math.max(0, Math.min(1, value / field.max));
-            if (height > 0) {
-                const y = bottom - 3 - height;
-                cv.roundRect(x + 3, y, width - 6, height, Math.min(4, height / 2), color);
-                if (height > 4) cv.line(x + 7, y + 2, x + width - 7, y + 2, 2, current.live ? t.text : t.dim);
-            }
-        }
+        const max = raw === null ? field.max : vm.model.definitions[field.rawId].invalidFrom - 1;
+        const yAt = (v) => bottom - 3 - (bottom - top - 6) * Math.max(0, Math.min(1, v / max));
+        const y = yAt(value || 0), height = bottom - 3 - y;
+        if (height > 0) cv.roundRect(x + 3, y, width - 6, height, Math.min(4, height / 2), color);
+        if (field.id === 'rpm') rpmBands(cv, t, x, width, yAt, current);
+        if (height > 4) cv.line(x + 7, y + 2, x + width - 7, y + 2, 2, current.live ? t.text : t.dim);
         cv.strokeRoundRect(x, top, width, bottom - top, 6, 2, t.tick);
         [0, 0.25, 0.5, 0.75, 1].forEach((fraction) => {
             const y = bottom - (bottom - top) * fraction;
             cv.line(x + width + 3, y, x + width + 8, y, 1, t.tick);
         });
+        if (field.id === 'rpm' && current.live) shiftMarkers(cv, t, vm, x, width, yAt, value);
     });
 }
 function readout(cv, t, vm, id, label, unit, x, y, width, places) {
@@ -96,7 +134,7 @@ module.exports = function driving(cv, t, vm) {
     cv.line(16, footerTop, 1584, footerTop, 1, t.track);
     readout(cv, t, vm, 'oilCds', 'OIL', 'F', 16, footerTop, 148, 0);
     readout(cv, t, vm, 'coolantCds', 'COOLANT', 'F', 180, footerTop, 148, 0);
-    readout(cv, t, vm, 'transmissionDa12', 'TRANS', 'F', 344, footerTop, 148, 0);
+    readout(cv, t, vm, 'transmission2', 'TRANS', 'F', 344, footerTop, 148, 0);
     readout(cv, t, vm, 'voltage', 'BATTERY', 'V', 508, footerTop, 148, 2);
     fuel(cv, t, vm, 672, footerTop, 244);
     exhaust(cv, t, vm, 940, footerTop);

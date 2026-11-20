@@ -1,11 +1,5 @@
 # trip data
 
-## general problems
-
-- start trip / current trip / options / back buttons need to go
-- start trip should be a button on trip tab
-- remove the options/current trip/back buttons - if something needs to be a setting move it to settings
-
 ## tabs
 
 ### trip

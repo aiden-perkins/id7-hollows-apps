@@ -9,7 +9,7 @@ const G_TRAIL_MS = 10000;
 const wheelFields = [
     { prefix: 'pressure', unit: 'psi', label: 'PSI', places: 0 },
     { prefix: 'tyreTemp', unit: 'F', label: 'F', places: 0 },
-    { prefix: 'wheelSpeed', unit: 'mph', label: 'MPH', places: 1 },
+    { prefix: 'wheelSpeed', unit: 'mph', label: 'MPH', places: 1, rawPrefix: 'wheelSpeedRaw' },
 ];
 function reading(vm, id) {
     const state = get(vm, id);
@@ -22,6 +22,10 @@ function physical(vm, id, unit) {
     const value = calibrated(definition) && definition.unit === unit && sample &&
         sample.unit === unit && Number.isFinite(sample.value) ? sample.value : null;
     return { value, live: current.live && value !== null };
+}
+function liveRaw(vm, id) {
+    const state = get(vm, id);
+    return state.state === 'live' && !state.retained && state.unit === 'raw' && Number.isFinite(state.value) ? state.value : null;
 }
 function gMeter(cv, t, vm, box) {
     const cx = box.x + box.w / 2, cy = box.y + box.h / 2;
@@ -100,8 +104,9 @@ function wheel(cv, t, x, y, angle, cosine, sine) {
 function wheelData(cv, t, vm, wheelId, x, y) {
     const options = { align: 'center', font: 'num' };
     wheelFields.forEach((field, index) => {
-        const current = physical(vm, field.prefix + wheelId, field.unit);
-        const shown = fmt(current.value, field.places) + ' ' + field.label;
+        const raw = field.rawPrefix ? liveRaw(vm, field.rawPrefix + wheelId) : null;
+        const current = raw === null ? physical(vm, field.prefix + wheelId, field.unit) : { value: raw, live: true };
+        const shown = raw === null ? fmt(current.value, field.places) + ' ' + field.label : fmt(raw, 0) + ' RAW';
         const size = Math.min(26, 26 * 108 / Math.max(1, cv.textWidth(shown, 26, options)));
         text(cv, shown, x, y - 20 + index * 28, 108, size, current.live ? C.cyan : t.dim, options);
     });
@@ -114,8 +119,18 @@ function progress(cv, t, cx, y, end, current, side, fullScale) {
 }
 function axle(cv, t, vm, name, cx, cy) {
     const motorTorque = physical(vm, 'sway' + name + 'MotorActual', 'Nm');
-    const roadAngle = physical(vm, name === 'Front' ? 'frontAxle' : 'rearAxle', 'deg');
-    const rotation = -(roadAngle.value === null ? 0 : roadAngle.value) * (name === 'Front' ? 2 : 10) * Math.PI / 180;
+    const front = name === 'Front';
+    let roadAngle = physical(vm, front ? 'frontAxleNative' : 'rearAxle', 'deg');
+    let visualAngle = (roadAngle.value || 0) * (front ? 2 : 10);
+    if (front && !roadAngle.live) {
+        const diagnostic = physical(vm, 'frontAxle', 'deg');
+        if (diagnostic.live || roadAngle.value === null) roadAngle = diagnostic;
+        const noCrc = physical(vm, 'steeringNoCrc', 'deg');
+        const driver = noCrc.live ? noCrc : physical(vm, 'steeringCrc', 'deg');
+        // The driver angle can animate the graphic while the numeric label still shows axle angle.
+        visualAngle = driver.live ? Math.max(-60, Math.min(60, driver.value / 8)) : (roadAngle.value || 0) * 2;
+    }
+    const rotation = -visualAngle * Math.PI / 180;
     const cosine = Math.cos(rotation), sine = Math.sin(rotation);
     const shown = fmt(motorTorque.value, 2) + ' Nm', options = { align: 'center', font: 'num' }, width = 92;
     const size = Math.min(20, 20 * width / Math.max(1, cv.textWidth(shown, 20, options)));
@@ -125,7 +140,7 @@ function axle(cv, t, vm, name, cx, cy) {
         // The wheel masks the bar ends at every steering angle.
         progress(cv, t, start, cy, wheelX, motorTorque, side, MOTOR_TORQUE_FULL_SCALE_NM);
         wheel(cv, t, wheelX, cy, roadAngle, cosine, sine);
-        const wheelId = (name === 'Front' ? 'F' : 'R') + (side < 0 ? 'LH' : 'RH');
+        const wheelId = (front ? 'F' : 'R') + (side < 0 ? 'LH' : 'RH');
         wheelData(cv, t, vm, wheelId, cx + side * 306, cy);
         // Repeat the actual axle measurement beside each half-bar, clear of the power column.
         text(cv, shown, start + side * (8 + width / 2), cy + 43, width, size,
@@ -167,4 +182,4 @@ function chassis(cv, t, vm, box) {
     powerBox(cv, t, vm, 'frontPower', cx, middle - spacing / 2);
     powerBox(cv, t, vm, 'rearPower', cx, middle + spacing / 2);
 }
-module.exports = { chassis, gMeter, pedalStatus, physical };
+module.exports = { chassis, gMeter, pedalStatus, physical, liveRaw };

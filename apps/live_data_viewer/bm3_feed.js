@@ -9,6 +9,7 @@ const catalog = require('./bm3_catalog');
 // This is a new scheduler, not the legacy viewer's scalar polling policy.
 const DEADLINE_MS = 1200, FRESH_MS = 1500;
 const POLL_RETRY_MS = 250, MAX_POLL_RETRIES = 3;
+const CORRECTION_IDS = [32, 33, 34, 35], STATUS_FRESH_MS = 6000;
 const normalize = (s) => String(s || '').replace(/\s+/g, ' ').trim().toLowerCase();
 const word = (n) => [Math.floor(n / 256) & 255, n & 255];
 const address = (n) => [Math.floor(n / 16777216) & 255, Math.floor(n / 65536) & 255,
@@ -49,6 +50,20 @@ function rawValue(bytes, at, d, ram) {
     if (ram) return (value * d.cm.coeffs[5] - d.cm.coeffs[2]) / d.cm.coeffs[1];
     return value * Number(d.factor) / Number(d.div) + Number(d.add);
 }
+function correctionEntries(definitions, allowSixSlots) {
+    const candidates = definitions.filter((d) => normalize(d.name) === '(ram) ignition timing corr. cyl.');
+    if (candidates.length !== 1) return [];
+    const d = candidates[0], m = d.m, start = parseInt(d.pid, 16);
+    if (!m || m.label !== 'Dzw_kr' || m.dataType !== 'SWORD' || m.matrixDim !== m.arraySize + ' 1 1' ||
+        d.bytes !== 2 || !d.signed || !scalar(Object.assign({}, d, { m: null }), true) ||
+        !['deg', '°'].includes(d.cm.unit) || !Number.isSafeInteger(start) || start < 0) return [];
+    // The N63TU3 has four cylinders per DME. The V8 BM3 log shows
+    // correction streams for local slots 1–4 on both DMEs.
+    if (m.arraySize !== 4 && !(allowSixSlots && m.arraySize === 6)) return [];
+    if (start + m.arraySize * d.bytes > 0x100000000) return [];
+    return CORRECTION_IDS.map((id, index) => ({ id,
+        d: Object.assign({}, d, { pid: (start + index * d.bytes).toString(16) }) }));
+}
 function displayValue(value, entry, ambient) {
     const d = entry.d, unit = d.units || d.cm && d.cm.unit || '', output = channels[entry.id].unit;
     if (output === 'psig') {
@@ -76,13 +91,18 @@ function displayValue(value, entry, ambient) {
 class Bm3Feed {
     constructor(ctx, changed) {
         this.ctx = ctx; this.changed = changed; this.run = null; this.task = null;
-        this.banks = [0x12, 0x13].map((target) => ({ target, samples: {}, reasons: {}, groups: [],
+        this.timingEngine = null;
+        this.banks = [0x12, 0x13].map((target) => ({ target, samples: {}, reasons: {}, groups: [], timingPeaks: {}, timingRom: null,
             status: 'Inactive', hz: 0, arrivals: [], lastCycle: 0, rom: null, failures: 0, retryAt: 0 }));
     }
-    start(engine) {
+    start(engine, options) {
         if (this.task) throw new Error('Previous BM3 acquisition has not drained');
         const run = { active: true, connected: false, lost: false, disposed: false, owned: new Map(),
-            diag: null, proxy: null, pending: null, engine };
+            diag: null, proxy: null, pending: null, engine, timingOnly: !!options, withTransport: options && options.withTransport };
+        if (run.timingOnly && this.timingEngine !== engine) {
+            this.timingEngine = engine;
+            this.banks.forEach((bank) => { bank.timingPeaks = {}; bank.timingRom = null; });
+        }
         this.run = run;
         this.banks.forEach((bank) => Object.assign(bank, { samples: {}, reasons: {}, groups: [],
             status: 'Connecting', hz: 0, arrivals: [], lastCycle: 0, rom: null, ambient: null, failures: 0, retryAt: 0 }));
@@ -96,6 +116,15 @@ class Bm3Feed {
             }
         })();
         this.changed();
+    }
+    cylinderTiming(cylinder, engine, now) {
+        if (engine !== this.timingEngine) return { peak: null, fresh: false };
+        // 0x12 is the right DME (C1–C4), 0x13 is the left DME (C5–C8).
+        const bank = this.banks[cylinder <= 4 ? 0 : 1], id = CORRECTION_IDS[(cylinder - 1) % 4];
+        const peak = bank.timingPeaks[id], sample = bank.samples[id];
+        const fresh = this.run && this.run.active && this.run.timingOnly && sample &&
+            now - sample.at <= STATUS_FRESH_MS && Math.abs(sample.value) <= 90;
+        return { peak: Number.isFinite(peak) ? peak : null, fresh: !!fresh };
     }
     async stop() {
         const run = this.run;
@@ -162,7 +191,11 @@ class Bm3Feed {
             run.ready = null;
         }
     }
-    async _request(run, target, sid, data, cleanup) {
+    _request(run, target, sid, data, cleanup) {
+        const request = () => this._exchange(run, target, sid, data, cleanup);
+        return run.withTransport ? run.withTransport(request) : request();
+    }
+    async _exchange(run, target, sid, data, cleanup) {
         if (run.lost || (!run.active && !cleanup)) throw new Error('BM3 acquisition stopped');
         const echo = data.slice(0, sid === 0x2C ? 3 : 2);
         const accept = (u) => u.length >= 3 && ((u[0] === sid + 0x40 && echo.every((b, i) => u[i + 1] === b)) ||
@@ -250,9 +283,16 @@ class Bm3Feed {
     async _ram(run, bank) {
         await this._vacant(run, bank.target, 0xF301);
         bank.rom = await this._identifyRom(run, bank.target);
+        if (run.timingOnly && bank.timingRom !== bank.rom) {
+            bank.timingRom = bank.rom; bank.timingPeaks = {};
+        }
         await this._clear(run, bank.target, 0xF301);
         const definitions = catalog.roms[bank.rom].map((id) => catalog.definitions[id]), entries = [];
-        for (const channel of channels.filter((c) => c.id >= 23)) {
+        const corrections = correctionEntries(definitions, run.timingOnly && run.engine === 'N63T3');
+        const wanted = run.timingOnly ? CORRECTION_IDS.map((id) => channels[id]) : channels.filter((c) => c.id >= 23);
+        for (const channel of wanted) {
+            const correction = corrections.find((entry) => entry.id === channel.id);
+            if (correction) { entries.push(correction); continue; }
             const candidates = definitions.filter((d) => normalize(d.name) === normalize(channel.name));
             const unique = Array.from(new Set(candidates));
             if (unique.length === 1 && scalar(unique[0], true)) entries.push({ id: channel.id, d: unique[0] });
@@ -286,9 +326,16 @@ class Bm3Feed {
             if (raw[1] !== undefined) bank.ambient = { value: raw[1], at: now };
             const ambient = bank.ambient && now - bank.ambient.at <= FRESH_MS ? bank.ambient.value : NaN;
             group.entries.forEach((entry) => {
-                const value = displayValue(raw[entry.id], entry, ambient);
-                if (Number.isFinite(value)) { bank.samples[entry.id] = { value, at: now }; delete bank.reasons[entry.id]; }
-                else { delete bank.samples[entry.id]; bank.reasons[entry.id] = 'Missing fresh ambient pressure or unsupported unit conversion'; }
+                const id = entry.id, value = displayValue(raw[id], entry, ambient);
+                if (Number.isFinite(value)) {
+                    bank.samples[id] = { value, at: now };
+                    delete bank.reasons[id];
+                    if (run.timingOnly && Math.abs(value) <= 90)
+                        bank.timingPeaks[id] = Math.max(bank.timingPeaks[id] || 0, Math.abs(value));
+                } else {
+                    delete bank.samples[id];
+                    bank.reasons[id] = 'Missing fresh ambient pressure or unsupported unit conversion';
+                }
             });
             this.changed();
         }
@@ -299,21 +346,25 @@ class Bm3Feed {
     }
     async _run(run) {
         if (!Object.prototype.hasOwnProperty.call(catalog.engines, run.engine)) throw new Error('Select the exact BM3 engine family in Settings');
+        if (run.timingOnly && !/^[NS]63/.test(run.engine)) throw new Error('Car Status cylinder timing requires an N63 or S63 engine profile');
         if (this.ctx.preview || !this.ctx.signals.hasNative()) throw new Error('Live vehicle diagnostic transport unavailable');
         try {
             await this._open(run);
             for (const bank of this.banks) {
-                for (const prepare of [this._ordinary, this._ram]) {
+                for (const prepare of run.timingOnly ? [this._ram] : [this._ordinary, this._ram]) {
                     if (!run.active) return;
                     try { await prepare.call(this, run, bank); }
                     catch (error) {
                         const ram = prepare === this._ram;
-                        channels.filter((c) => ram ? c.id >= 23 : c.id < 23).forEach((c) => { bank.reasons[c.id] = error.message; });
+                        const failed = run.timingOnly ? CORRECTION_IDS.map((id) => channels[id]) :
+                            channels.filter((c) => ram ? c.id >= 23 : c.id < 23);
+                        failed.forEach((c) => { bank.reasons[c.id] = error.message; });
                         await this._clear(run, bank.target, ram ? 0xF301 : 0xF300);
                     }
                 }
                 const count = bank.groups.reduce((n, group) => n + group.entries.length, 0);
-                bank.readyStatus = (bank.rom ? 'ROM ' + bank.rom + ' / ' : '') + count + '/44 defined';
+                bank.readyStatus = (bank.rom ? 'ROM ' + bank.rom + ' / ' : '') + count +
+                    (run.timingOnly ? '/4 timing channels defined' : '/44 defined');
                 bank.status = bank.readyStatus;
                 this._notify();
             }
@@ -343,7 +394,7 @@ class Bm3Feed {
                 }
                 // Back off failed DMEs independently, without holding up a healthy DME.
                 const next = this.banks.filter((bank) => bank.groups.length).map((bank) => bank.retryAt);
-                const waitMs = Math.min.apply(null, next) - Date.now();
+                const waitMs = Math.max(run.timingOnly ? 750 : 0, Math.min.apply(null, next) - Date.now());
                 if (run.active && next.length && waitMs > 0)
                     await new Promise((resolve) => setTimeout(resolve, waitMs));
             }

@@ -2,10 +2,9 @@
   "id": "tetris",
   "title": "Tetris",
   "description": "Falling blocks with controller and touch controls, hold, ghost pieces, and saved progress",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "vendor": "custom",
   "loggingId": "OA9F",
-  "maxDiskUsage": 1048576,
   "signals": {
     "de.bmw.infotainment.vehicle.Vehicle2": {
       "statusCarSpeed2": "rs"

@@ -14,29 +14,29 @@
 
 | Data | units | min | max | upstream confirmed fast? | upstream? | implemented? | graphic | notes |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| RPM | # | 0 | 7000 | yes | yes | yes | bar graph | 6k-6.3k yellow, 6.3k-6.5k orange, 6.5k-7k red | add 2 more lines to show where rpm would be on a downshift and upshift |
+| RPM | # | 0 | 7000 | yes | yes | yes | bar graph |   |
 | Torque | lb/ft | 0 | 1000 | yes | yes | yes | bar graph |   |
 | Boost | psi | 0 | 32 | yes | yes | yes | bar graph |   |
 | Power | hp | 0 | 1000 | yes | yes | yes | bar graph | calculated from torque & rpm |
 | Exhaust Valve Controller | open/closed | N/A | N/A | not needed | yes | yes | graphic/buttons | make sure it uses the same as upstream |
 | Coolant Temperature | F | N/A | N/A | not needed | yes | yes | \# + units (#u) | changes color based on readiness |
 | Oil Temperature | F | N/A | N/A | not needed | yes | yes | #u | changes color based on readiness |
-| Transmission Temperature | F | N/A | N/A | not needed | yes - EGS`0x18`, UDS `22 6000` | try up | #u | changes color based on readiness |
+| Transmission Temperature | F | N/A | N/A | not needed | yes | yes | #u | changes color based on readiness |
 | Fuel Tank | Gal/% | N/A | N/A | not needed | yes | yes | #u | show both gallons & percentage of 18 gal |
 | Battery | V | N/A | N/A | not needed | yes | yes | #u |   |
-| G-Force Meter | G | 0 | 2 | yes | yes | yes | circular with dot | show a little trail with min + max |
+| G-Force Meter | G | 0 | 1.5 | yes | yes | yes | circular with dot | show a little trail with min + max |
 | Tire Temperature | F | N/A | N/A | not needed | yes | yes | next to each wheel #u | changes color based on readiness |
-| Tire Speed | mph | N/A | N/A | Powertrain.ActualValueRPMWheel | yes | slow - try up | next to each wheel #u |   |
+| Tire Speed | raw / mph | N/A | N/A | on-car check pending | `yes` | yes | next to each wheel #u |   |
 | Tire Pressure | psi | N/A | N/A | not needed | yes | yes | next to each wheel #u |   |
-| Front Wheel Steering Angle | degrees | N/A | N/A | SteeringAngle.ActualSteeringAngleDriver/actualSteeringAngleDriverNoCRC | yes | slow - try up | wheel moves #u |   |
+| Front Wheel Steering Angle | degrees | N/A | N/A | on-car check pending | `yes` | yes | wheel moves #u |   |
 | Rear Wheel Steering Angle | degrees | N/A | N/A | no | no | slow | wheel moves #u | wheels should move 10x scale to actual |
 | Front Sway Bar Torque | nm | \-? | ? | no | no | slow | bar on front axle #u | negative/positive equates to left/right |
 | Rear Sway Bar Torque | nm | \-? | ? | no | no | slow | bar on rear axle #u | negative/positive equates to left/righ |
-| Transfer Case Power Distribution | hp/lb-ft/% | ? | ? | BasicDataSet.valueDistributionLongitudinalTorqueRearAxisFrontAxis | kinda | no | vertical bar on car #u | disengaged = 100% to the rear, 50/50 for engaged |
+| Transfer Case Power Distribution | % / estimated hp | 0% | 100% | on-car check pending | yes | yes | vertical bar and axle HP readouts |   |
 | Rear Differential Power Distribution | hp/lb-ft/% | ? | ? | no | no | no | bar on rear axle #u | disengaged = 50/50, engaged = 100% to a side |
 | Front Automatic Differential Brake | ? | ? | ? | no | no | no | bar on front axle #u | unsure what units |
-| Accelerator Pedal | % | 0 | 100 | AcceleratorPedal.AngleAcceleratorPedal.actualValueAngleAcceleratorPedal & other DME | yes | slow - try up | bar graph |   |
-| Brake Pedal | bar/% | 0 | 84 | VehicleStabilizationManagement.StabilizationManagement.statusBrakingDriver | kinda | slow - try up | bar graph |   |
+| Accelerator Pedal | % | 0 | 100 | on-car check pending | `yes` | yes | bar graph |   |
+| Brake Pedal | raw / bar | 0 | 62 raw / 84 bar | on-car check pending | `yes` | yes | bar graph |   |
 | Kickdown | on/off | N/A | N/A | no | no | needs confirming | unsure | either a button/card or something with the accel |
 | Parking Brake | on/releasing/engaging/off | N/A | N/A | not needed | mine is better | yes | unsure | probably a button/card - check if mine is better |
 

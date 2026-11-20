@@ -1,11 +1,12 @@
 'use strict';
 const { FuelSource } = require('./fuel');
+const { SAMPLE_MS, validRpm } = require('./calculations');
 const DEFINITIONS = [
     { key: 'gps', iface: 'de.bmw.infotainment.navigation.positioning.Positioning', instance: 'Main_Instance', field: 'rawPositionData', read: true, pollMs: 1000, staleMs: 5000 },
-    { key: 'speed', iface: 'de.bmw.infotainment.vehicle.Vehicle2', field: 'statusCarSpeed2', read: true, pollMs: 100, staleMs: 3000 },
-    { key: 'rpm', iface: 'de.bmw.infotainment.vehicle.CDS', field: 'statusEngineSpeed2', read: true, pollMs: 100, staleMs: 3000 },
+    { key: 'speed', iface: 'de.bmw.infotainment.vehicle.Vehicle2', field: 'statusCarSpeed2', read: true, pollMs: SAMPLE_MS, staleMs: 3000 },
+    { key: 'rpm', iface: 'de.bmw.infotainment.vehicle.CDS', field: 'statusEngineSpeed2', read: true, pollMs: SAMPLE_MS, staleMs: 3000 },
     { key: 'engine', iface: 'de.bmw.infotainment.vehicle.CDS', field: 'statusEngineStatus', read: true, pollMs: 1000, staleMs: 3000 },
-    { key: 'fuelCounter', iface: 'de.bmw.infotainment.vehicle.CDS2', field: 'statusInjectionVolume', read: true, pollMs: 100, staleMs: 3000 },
+    { key: 'fuelCounter', iface: 'de.bmw.infotainment.vehicle.CDS2', field: 'statusInjectionVolume', read: true, pollMs: SAMPLE_MS, staleMs: 3000 },
     { key: 'range', iface: 'de.bmw.infotainment.KombiIF', field: 'statusRangeTankStatus', read: true, pollMs: 1000, staleMs: 30000 },
     { key: 'rangeFallback', iface: 'de.bmw.infrastructure.VehicleInformation', field: 'Range', read: false, staleMs: null },
     { key: 'gear', iface: 'de.bmw.infrastructure.VehicleInformation', field: 'statusGearboxDrive', read: false, staleMs: null },
@@ -13,12 +14,12 @@ const DEFINITIONS = [
 ];
 const NOTES = {
     ignition: 'Automatic recording uses the CDS engine-running enum, not ignition. Missing or invalid engine status is not engine-off; engine stop/start may divide engine sessions.',
-    fuel: 'Upstream Live Data fuel path: physical DME diagnostic flow, then CDS2 injection-volume counter calibrated against fresh DME flow. US gallons/hour; stale/unsupported flow is unavailable, not zero. Tank changes are never consumption.',
+    fuel: 'Whole-engine flow from both DME banks or the OBD engine fuel rate via 01/5E or 22/F45E. The CDS2 injection-volume counter backs up diagnostic flow after calibration against a whole-engine reading. US gallons/hour.',
     fuelCounter: 'CDS2.statusInjectionVolume.injectionVolumeFuelEngine is a wrapping raw counter, not litres. Its rate requires live diagnostic calibration for this collection session.',
     range: 'KombiIF.statusRangeTankStatus: mileageKilometre / 1.609344 miles; fluidLevelFuelTank / 3.785411784 US gallons. Invalid sentinels excluded; context only, not trip-distance or fuel-consumption deltas.',
     rangeFallback: 'VehicleInformation.Range is an event-only odometer fallback; never polled. Held only while its provider remains connected.',
     speed: 'Raw / 64 km/h, converted to mph; 65535 is unavailable.',
-    rpm: 'Raw * 0.25 RPM; 65535 is unavailable.',
+    rpm: 'Raw * 0.25 RPM; values outside 0–11,999.75 RPM are rejected. Keep the highest valid reading between saved samples for the peak.',
     engine: 'CDS.statusEngineStatus.statusEngineRunDrive: MOTOR_AUS/0 off, MOTOR_STARTET/1 starting, MOTOR_LAEUFT/2 running; 3 is unavailable. Same engine input as upstream Live Data trips.',
     gps: 'Position assumes Wgs84Coordinate3D latitude/longitude are WGS84 degrees; not calibrated on-car. UTC must advance; receipt freshness alone is insufficient. Accuracy is not supplied. 3D height is converted from rawLengthMeter to feet; height reference and vertical response remain unconfirmed. New trip distance uses vehicle speed; saved GPS-policy trips keep their original calculation.',
     gear: 'Actual gearbox enum takes precedence; DataPowerTrain2 is fallback. N_OR_P/NP remain unresolved unless an explicit P/N selector resolves them. Change-driven values hold only while their provider remains connected. No D/S/M program or RPM/speed gear guess is inferred.',
@@ -61,7 +62,7 @@ function decode(key, raw) {
     }
     if (key === 'fuelCounter') {
         const value = raw.injectionVolumeFuelEngine;
-        const valid = Number.isInteger(value) && value >= 0 && value <= 65535;
+        const valid = Number.isInteger(value) && value >= 0 && value < 65535;
         return { state: valid ? 'live' : 'invalid', value: valid ? value : null, note: NOTES.fuelCounter };
     }
     if (key === 'range' || key === 'rangeFallback') {
@@ -78,15 +79,16 @@ function decode(key, raw) {
             gear = typeof v === 'number' ? Number.isInteger(v) && v >= 3 && v <= 12 ? String(v - 2) : v === 1 ? 'R' : v === 2 ? 'NP' : null :
                 /^G([1-9]|10)$/.test(v) ? v.slice(1) : v === 'R' ? 'R' : v === 'N_OR_P' ? 'NP' : null;
             stage = STAGES[raw.statusActualStageDrive] || null;
-            if (gear === 'NP' && (stage === 'P' || stage === 'N')) gear = stage;
+            if (stage === 'R' && (!gear || gear === 'NP')) gear = stage;
+            else if (gear === 'NP' && (stage === 'P' || stage === 'N')) gear = stage;
             else if (gear && stage && (stage === 'R' && gear !== 'R' || stage === 'D' && gear === 'R' || (stage === 'P' || stage === 'N') && gear !== stage)) gear = null;
         } else gear = typeof v === 'number' ? SELECTIONS[v] : /^(N|R|P|NP|_[1-9])$/.test(v) ? v.replace('_', '') : null;
         return { state: gear ? 'live' : 'invalid', value: gear || null, stage, source: key === 'gear' ? 'statusGearboxDrive' : 'DataPowerTrain2', note: NOTES[key] };
     }
-    const value = raw[key === 'speed' ? 'speedVehicleCentreOfGravity' : 'actualValueRPMEngineCrankshaft'];
-    const valid = Number.isInteger(value) && value >= 0 && value < 65535;
-    return { state: valid ? 'live' : 'invalid',
-        value: valid ? (key === 'speed' ? value / 64 / 1.609344 : value * 0.25) : null, note: NOTES[key] };
+    const count = raw[key === 'speed' ? 'speedVehicleCentreOfGravity' : 'actualValueRPMEngineCrankshaft'];
+    const value = key === 'speed' ? count / 64 / 1.609344 : count * 0.25;
+    const valid = Number.isInteger(count) && count >= 0 && (key === 'speed' ? count < 65535 : validRpm(value));
+    return { state: valid ? 'live' : 'invalid', value: valid ? value : null, note: NOTES[key] };
 }
 function deadline(p, ms, label) {
     let timer;
@@ -97,7 +99,7 @@ function deadline(p, ms, label) {
 class Sources {
     constructor(ctx, changed, Diag) {
         this.ctx = ctx; this.signals = ctx.signals; this.changed = changed; this.connections = {};
-        this.values = {}; this.closed = false; this.enabled = false; this.mode = 'off';
+        this.values = {}; this.closed = false; this.enabled = false; this.mode = 'off'; this.rpmPeak = null;
         this.fixSequence = 0; this.gpsFixes = []; this.lastFix = null; this.lastFixTime = null;
         DEFINITIONS.forEach((d) => { this.values[d.key] = { state: 'waiting', note: 'Recorder is not collecting', epoch: 0, coordinateEpoch: 0, receivedMono: null, receivedAt: null, raw: null }; });
         this.fuel = new FuelSource(ctx, (sample) => this.fuelDelivery(sample), Diag);
@@ -151,12 +153,14 @@ class Sources {
         this.values[key] = Object.assign({}, decoded, { raw, receivedAt: wall, receivedMono: now,
             epoch: old.epoch + (decoded.state === 'live' ? 0 : 1),
             heightEpoch: (old.heightEpoch || 0) + (old.quality && old.quality.heightValid && decoded.quality && !decoded.quality.heightValid ? 1 : 0) }, position);
+        if (key === 'rpm' && decoded.state === 'live' && this.mode === 'full') this.rpmPeak = Math.max(this.rpmPeak || 0, decoded.value);
         if (key === 'fuelCounter') {
             if (decoded.state === 'live') this.fuel.feed(decoded.value, now, wall);
             else this.fuel.resetCounter();
         }
         this.changed();
     }
+    takeRpmPeak() { const peak = this.rpmPeak; this.rpmPeak = null; return peak; }
     fuelDelivery(sample) { this.values.fuel = sample; this.changed(); }
     transport(c, state, note) { c.definitions.forEach((d) => this.state(d.key, state, note)); }
     async open(def) {
@@ -276,7 +280,7 @@ class Sources {
         c.closed = true; clearTimeout(c.waitTimer);
         if (c.proxy && c.proxy.shutdown) Promise.resolve().then(() => c.proxy.shutdown()).catch((e) => this.ctx.log.warn(e));
     }
-    sample(now) {
+    sample(now, includeFixes = true) {
         const result = {};
         DEFINITIONS.forEach((d) => {
             const v = this.values[d.key], age = v.receivedMono === null ? null : Math.max(0, now - v.receivedMono);
@@ -291,7 +295,7 @@ class Sources {
         if (gps.positionState === 'live' && (gps.state !== 'live' || gps.fixAgeMs > FIX_MAX_AGE_MS || Date.now() - gps.fixTimeMs > FIX_MAX_AGE_MS)) {
             gps.positionState = 'stale'; gps.positionNote = 'UTC fix has not advanced within the bounded freshness window'; gps.coordinates = null;
         }
-        gps.fixes = this.gpsFixes.map((f) => ({ id: f.id, utcMs: f.utcMs, coordinates: f.coordinates,
+        if (includeFixes) gps.fixes = this.gpsFixes.map((f) => ({ id: f.id, utcMs: f.utcMs, coordinates: f.coordinates,
             coordinateEpoch: f.coordinateEpoch, ageMs: Math.max(0, now - f.receivedMono), accuracyMeters: null }));
         const actual = result.gear, selection = result.gearSelection;
         if (actual.state === 'live') {

@@ -2,10 +2,9 @@
   "id": "pacman",
   "title": "Pac-Man",
   "description": "An independent maze chase game with original layouts, four ghosts, power pellets, controller and touch controls, and saved progress",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "vendor": "custom",
   "loggingId": "OA9F",
-  "maxDiskUsage": 1048576,
   "signals": {
     "de.bmw.infotainment.vehicle.Vehicle2": { "statusCarSpeed2": "rs" },
     "de.bmw.infotainment.controlelements.FrontCCU": { "statusRotaryEncoderState": "rs" }

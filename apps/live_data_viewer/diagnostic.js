@@ -4,6 +4,7 @@ const { Diag, NRC, hex } = require('./kit/diag');
 
 const REQUEST_MS = 5000;
 const FAST_REQUEST_MS = 1000, FAST_POLL_MS = 100, BUSY_RETRY_MS = 100, MAX_DIDS = 8;
+const STATUS_REQUEST_MS = 1600, STATUS_RETRY_MS = 15000;
 const floatBytes = new Uint8Array(4), floatView = new DataView(floatBytes.buffer);
 function deadline(promise, ms, label) {
     let timer;
@@ -41,15 +42,15 @@ class DiagnosticServices {
         this.closed = false; this.generation = 0; this.signature = ''; this.groups = [];
         this.link = null; this.pending = null; this.timer = null; this.control = null; this.fastReads = 0; this.picks = {};
         this.lengths = new Map(); this.noBatch = new Set(); this.busyUntil = 0;
-        this.idleWaiters = [];
+        this.idleWaiters = []; this.paused = false;
     }
-    activate(definitions) {
+    activate(definitions, page) {
         if (this.closed) return;
         const active = definitions.filter((d) => d.diag);
-        const signature = JSON.stringify(active.map((d) =>
-            [d.id, D.sourceKey(d), d.field, d.diag, d.diagCandidates, d.focusedFast, d.pollMs]));
+        const signature = JSON.stringify([page, active.map((d) =>
+            [d.id, D.sourceKey(d), d.field, d.diag, d.diagCandidates, d.focusedFast, d.pollMs, d.fallbackFor])]);
         if (signature === this.signature) return;
-        this.signature = signature; this.generation++;
+        this.signature = signature; this.generation++; this.page = page;
         clearTimeout(this.timer); this.timer = null;
         const groups = new Map();
         active.forEach((d) => {
@@ -221,7 +222,7 @@ class DiagnosticServices {
     }
     _wake() {
         clearTimeout(this.timer); this.timer = null;
-        if (this.closed || !this.groups.length && !this.control) return;
+        if (this.closed || this.paused || !this.groups.length && !this.control) return;
         if (this.ctx.preview || !this.signals.hasNative()) {
             this._statusAll('unavailable', this.ctx.preview ? 'Preview has no live diagnostic feed' : 'SOME/IP native module unavailable');
             return;
@@ -242,8 +243,9 @@ class DiagnosticServices {
         }
         if (!this.groups.length) return;
         const now = Date.now(), needBoost = this.model.boostFromDme();
-        const groups = this.groups.filter((group) => !group.boost || needBoost);
-        // Keep checking FES freshness while diagnostic boost is asleep.
+        const groups = this.groups.filter((group) => (!group.boost || needBoost) && group.entries.some(({ d }) =>
+            !d.fallbackFor || this.model.state(this.model.definitions[d.fallbackFor]).state !== 'live'));
+        // Check notification freshness while the corresponding diagnostic reads are paused.
         let due = null, nextAt = groups.length < this.groups.length ? now + 100 : Infinity;
         groups.forEach((group) => {
             if (group.nextAt <= now && (!due || group.nextAt < due.nextAt)) due = group;
@@ -312,7 +314,9 @@ class DiagnosticServices {
         groups = groups || [group];
         const link = this.link, diag = link.diag, batch = groups.length > 1;
         const params = batch ? groups.reduce((all, entry) => all.concat(entry.params), []) : group.params;
-        const requestMs = group.focusedFast ? FAST_REQUEST_MS : REQUEST_MS, startedAt = Date.now();
+        const statusRead = this.page === 'status' && !group.control;
+        const requestMs = group.focusedFast ? FAST_REQUEST_MS : statusRead ? STATUS_REQUEST_MS : REQUEST_MS;
+        const startedAt = Date.now();
         const op = { link, group, groups, batch, startedAt, generation: this.generation, expiresAt: startedAt + requestMs,
             sent: false, sendSettled: false, accepted: false, answer: null, done: false, timer: null };
         this.pending = op;
@@ -346,7 +350,7 @@ class DiagnosticServices {
             note: 'No diagnostic response from ECU 0x' + hex(group.target) + ' within ' + requestMs + ' ms' }), requestMs);
         // The kit must not sleep for a second before its redundant adapter retry.
         // A busy focused request settles once, then the scheduler waits 100 ms globally.
-        const options = group.focusedFast ? { maxRetries: 0, callTimeoutMs: requestMs } : undefined;
+        const options = group.focusedFast || statusRead ? { maxRetries: 0, callTimeoutMs: requestMs } : undefined;
         Promise.resolve().then(() => {
             if (!this._current(op) || op.done || Date.now() >= op.expiresAt) throw new Error('Diagnostic request cancelled');
             return diag.send(group.target, group.sid, params, options);
@@ -420,6 +424,7 @@ class DiagnosticServices {
         const diag = op.link.diag;
         diag.removeListener('frame', op.onFrame); diag.removeListener('tasError', op.onError); diag.removeListener('tasReject', op.onReject);
         const current = this._current(op), now = Date.now();
+        const retryMs = this.page === 'status' ? STATUS_RETRY_MS : 5000;
         let align = false;
         if (current && op.group.focusedFast && error && error.busy) this.busyUntil = now + BUSY_RETRY_MS;
         if (current && op.batch && error) {
@@ -456,7 +461,7 @@ class DiagnosticServices {
                     }
                 } else {
                     // Non-focused panels retain their configured post-response cadence/backoff.
-                    group.nextAt = now + Math.max(error ? 5000 : 50,
+                    group.nextAt = now + Math.max(error ? retryMs : 50,
                         Number.isFinite(cadence) && cadence > 0 ? cadence : 1000);
                 }
                 if (group.candidates) {
@@ -465,7 +470,7 @@ class DiagnosticServices {
                     } else {
                         this._choose(group, (group.pick + 1) % group.candidates.length);
                         group.failedCandidates++;
-                        group.nextAt = now + (group.failedCandidates < group.candidates.length ? 50 : Math.max(5000, cadence));
+                        group.nextAt = now + (group.failedCandidates < group.candidates.length ? 50 : Math.max(retryMs, cadence));
                         if (group.failedCandidates >= group.candidates.length) group.failedCandidates = 0;
                     }
                 }
@@ -493,6 +498,16 @@ class DiagnosticServices {
     idle() {
         if (!this.pending) return Promise.resolve();
         return new Promise((resolve) => this.idleWaiters.push(resolve));
+    }
+    async withPausedReads(work) {
+        this.paused = true;
+        try {
+            await this.idle();
+            return await work();
+        } finally {
+            this.paused = false;
+            this._wake();
+        }
     }
     _release(op) {
         if (!op.done || !op.sendSettled || this.pending !== op) return;

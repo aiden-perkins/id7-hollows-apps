@@ -4,8 +4,11 @@ const IF = {
     engine: 'de.bmw.infotainment.vehicle.CDS', speed: 'de.bmw.infotainment.vehicle.Vehicle2',
     mode: 'de.bmw.infotainment.drivingexcitement.FES', thermal: 'de.bmw.infrastructure.analytics.BasicDataSet',
     air: 'de.bmw.infrastructure.EnvironmentalInformation', accel: 'de.bmw.infotainment.vehicle.CDS2',
+    vehicleInfo: 'de.bmw.infrastructure.VehicleInformation',
     gps: 'de.bmw.infotainment.navigation.positioning.Positioning',
     diagnostic: 'com.harman.infotainment.systemfunctions.tasu.tasu.InternalTasu', steering: 'de.bmw.infotainment.drivingexcitement.XView',
+    steeringChassis: 'de.bmw.chassis.SteeringAngle', stability: 'de.bmw.chassis.VehicleStabilizationManagement',
+    powertrain: 'de.bmw.powertrain.Powertrain', pedal: 'de.bmw.powertrain.AcceleratorPedal',
     tpms: 'de.bmw.infotainment.vehicle.TPMS', vehicle: 'de.bmw.infotainment.vehicle.Vehicle',
     sensors: 'de.bmw.infotainment.vehicle.TPMSInternalData',
 };
@@ -24,6 +27,8 @@ const converters = {
     tyrePressureRaw: { factor: 0.1, offset: 0, unit: 'vehicle pressure', maxRaw: 65531 },
     unscaled: { factor: 1, offset: 0, unit: 'raw' },
     steeringAngle: { factor: 0.04395, offset: -1440.11, unit: 'deg', minRaw: 3, maxRaw: 65532 },
+    frontAxleAngle: { factor: 0.00274658, offset: -89.99725342, unit: 'deg', maxRaw: 65534 },
+    acceleratorPedal: { factor: 0.025, offset: 0, unit: '%', maxRaw: 4000 },
     diagnosticVoltage: { factor: 0.02, offset: 0, unit: 'V', minRaw: 0, maxRaw: 32767 },
     diagnosticPedal: { factor: 0.01220703, offset: 0, unit: '%', minRaw: 0, maxRaw: 8192 },
     diagnosticFuel: { factor: 1 / 128, offset: 0, unit: 'L', maxRaw: 65535 },
@@ -31,6 +36,7 @@ const converters = {
     boostFes: { factor: 0.01, offset: 0, multiplier: 14.503773773020923, unit: 'psi', maxRaw: 254 },
     diagnosticBrake: { factor: 0.1, offset: 0, unit: 'bar', minRaw: -32768, maxRaw: 32767 },
 };
+const validSignal = { 1: 'SIGNALWERT_IST_GUELTIG_UND_ABGESICHERT_UND_PLAUSIBILISIERT' };
 const qualifierEnums = {
     steering: {
         1: 'SIGNALWERT_IST_GUELTIG_UND_ABGESICHERT_UND_PLAUSIBILISIERT__ZUSTAND_S_STATUS_PERMANENT',
@@ -72,12 +78,12 @@ function temperature(id, name, page, group, target, did, bytes, factor, offset, 
 // Upstream Car Vitals config.dme: standard OBD values are Celsius, not CDS's C+48.
 temperature('coolantObd', 'Coolant (OBD PID 05)', 'sources', 'Engine', 0x12, 0xF405, 1, 1, -40, {
     notes: 'Standard OBD coolant PID 05 via UDS F405: byte - 40 Celsius.',
-    physicalMin: -40, physicalMax: 215 });
+    physicalMin: -40, physicalMax: 215, fallbackFor: 'coolantCds' });
 temperature('oilObd', 'Engine oil (OBD PID 5C)', 'sources', 'Engine', 0x12, 0x5C, 1, 1, -40, {
-    diag: { sid: 0x01 }, physicalMin: -40, physicalMax: 170,
+    diag: { sid: 0x01 }, physicalMin: -40, physicalMax: 170, fallbackFor: 'oilCds',
     notes: 'Upstream Car Vitals config.dme.oil first candidate: OBD service 01 PID 5C, byte - 40 Celsius.' });
 temperature('oilUds', 'Engine oil (UDS F45C)', 'sources', 'Engine', 0x12, 0xF45C, 1, 1, -40, {
-    physicalMin: -40, physicalMax: 170,
+    physicalMin: -40, physicalMax: 170, fallbackFor: 'oilCds',
     notes: 'Upstream Car Vitals config.dme.oil second candidate: UDS F45C, byte - 40 Celsius.' });
 preferred('coolant', 'Coolant / engine water', 'Engine', ['coolantCds', 'coolantObd'],
     'Prefer the supported upstream CDS engine-water signal; fall back to standard OBD coolant, never radiator outlet or pump electronics.');
@@ -87,15 +93,13 @@ candidate('transmission1', 'Transmission oil (vehicle signal)', 'temperatures', 
     'valueTemperatureTransmissionOil', 255, 'Upstream Car Vitals scaling.gearboxTemp: byte - 48 Celsius. Native catalog provides notifications only, no getter. An unavailable provider is not evidence of missing EGS oil data.',
     { read: false, decoder: 'engineTemperature' });
 temperature('transmission2', 'Transmission oil (EGS)', 'temperatures', 'Transmission', 0x18, 0x6000, 1, 1, -40, {
-    physicalMin: -40, physicalMax: 160,
+    physicalMin: -40, physicalMax: 160, pages: ['driving'],
     notes: 'Actual G015 SVT and 2026-10-28 E-Sys inventory identify EGS7. S18A EGS__ZFB_CE_EV maps EGS7 to GSZFBCE. ISTA GSZFBCE SG_FUNKTIONEN _GETRIEBEOELTEMPERATUR / 6000: unsigned byte - 40 Celsius, also upstream Car Vitals first EGS candidate. DA12 forum scaling is not substituted.' });
-temperature('transmissionDa12', 'Transmission oil (EGS DA12)', 'driving', 'Transmission', 0x18, 0xDA12, 1, 1, -48, {
-    physicalMin: -40, physicalMax: 160,
-    notes: 'Requested EGS ECU 0x18 / UDS 22 DA12: upstream Car Vitals candidate uses payload byte 0 - 48 Celsius. Forum-reported scaling is unconfirmed on this car; this is separate from the validated GSZFBCE 6000 conversion.' });
 add('converter', 'Torque converter temperature', 'temperatures', 'Transmission', { notes: 'GSZFBCE converter-temperature collectives are historical time-in-temperature bins, not a current converter sensor. Neither transmission-oil signal is substituted.' });
 add('iatBank1', 'Intake air / bank 1', 'temperatures', 'Air', {
-    numeric: true, unit: 'F', notes: 'DME 580F/581E and OBD 0F do not establish bank 1 identity. Generic intake air is separately displayed; F477 identifies charge air, not bank-1 intake air.' });
+    numeric: true, unit: 'F', notes: 'BMW N63B44T3 training identifies the pre-compressor intake sensor in the bank 2 air line. DME 580F/581E and OBD 0F provide no separate bank 1 sensor identity.' });
 temperature('iatBank2', 'Intake air / bank 2', 'temperatures', 'Air', 0x12, 0x562A, 1, 0.75, -48, {
+    physicalMin: -40, physicalMax: 150,
     notes: 'ISTA DME8FF_R ANSLUFTTEMP_LINEAR_BANK2: explicitly bank-2 linearized intake-air temperature, unsigned byte * 0.75 - 48 Celsius. Shared PRG is not a guarantee of fitted runtime support.' });
 temperature('iatUds', 'Intake air (UDS F40F)', 'sources', 'Air', 0x12, 0xF40F, 1, 1, -40, {
     physicalMin: -40, physicalMax: 150, notes: 'Upstream Car Vitals config.dme.iat first candidate F40F: byte - 40 Celsius; generic intake-air identity, not bank-specific.' });
@@ -109,6 +113,7 @@ preferred('iat', 'Intake air (generic)', 'Air', ['iatUds', 'iatObd', 'iatDme'],
 candidate('outside', 'Outside air', 'temperatures', 'Air', 'air', 'ExteriorTemperature', 'temperatureExterior', 255,
     'BMW M Laptimer outside-air conversion: raw times 0.5 minus 40 degrees C, displayed in degrees F. Native catalog provides notifications only, no getter.', { read: false, decoder: 'ambient' });
 temperature('preThrottleAir', 'Pre-throttle air (measured)', 'temperatures', 'Air', 0x12, 0x59D4, 2, 0.0234375, -273.15, {
+    physicalMin: -40, physicalMax: 215,
     notes: 'ISTA DME8FF_R ANSAUGLUFTTEMP_VOR_DK: explicitly measured air before throttle, unsigned BE16 * 0.0234375 - 273.15 Celsius.' });
 temperature('chargeAir', 'Charge air / bank 1 sensor 1', 'temperatures', 'Air', 0x12, 0xF477, 1, 1, -40, {
     diag: { at: 1, minBytes: 5, validAt: 0, validMask: 1, validValues: [1] },
@@ -116,23 +121,43 @@ temperature('chargeAir', 'Charge air / bank 1 sensor 1', 'temperatures', 'Air', 
     notes: 'Upstream Car Vitals F477 byte 1: charge-air temperature bank 1 sensor 1, byte - 40 Celsius. OBD PID77 support bit0 must be set; other bank/sensor bytes are not substituted.' });
 add('cabin', 'Cabin air temperature', 'temperatures', 'Air');
 
+candidate('brakeStatus', 'Driver braking status', 'driving', 'Driver inputs', 'stability', 'StabilizationManagement', 'statusBrakingDriver', 63,
+    'Upstream Live Data driver braking status. The catalog defines a six-bit field with 63 unfilled; physical units are unknown.',
+    { read: false, decoder: 'unscaled', staleMs: 1500 });
 candidate('brakePressure', 'Brake system pressure', 'driving', 'Driver inputs', 'diagnostic', 'brakeSystemPressure', 'value', null,
     'ISTA IB_G05 / IB_G2X DRUCKSENSOR_LESEN: DSC BRS 0x29, UDS 22 DB29; second big-endian signed 16-bit field / 10 bar. Not master-cylinder pressure or pedal percentage.',
-    { instance: 'SystemFunctionsInternalTasuInst1', decoder: 'diagnosticBrake', staleMs: 1500, pollMs: 50,
+    { instance: 'SystemFunctionsInternalTasuInst1', decoder: 'diagnosticBrake', staleMs: 1500, pollMs: 50, fallbackFor: 'brakeStatus',
         diag: { target: 0x29, sid: 0x22, did: 0xDB29, at: 2, bytes: 2, signed: true, minBytes: 4 } });
 candidate('steering', 'Steering wheel angle', 'sources', 'Driver inputs', 'steering', 'statusSteeringAngleDriver', 'actualValueSteeringAngleDriver', 65535,
     'BMW SDK steeringAngleConverter: raw * 0.04395 - 1440.11 degrees, valid raw 3-65532. Only explicitly valid catalog qualifiers are accepted.',
     { decoder: 'steeringAngle', qualifier: 'qualifierActualValueSteeringAngleDriver', validQualifiers: qualifierEnums.steering });
+candidate('steeringNoCrc', 'Steering wheel angle (no CRC)', 'driving', 'Driver inputs', 'steeringChassis', 'actualSteeringAngleDriverNoCRC',
+    'actualValueSteeringAngleDriver', 65535, 'Retained Lab values match the XView steering wheel angle encoding.',
+    { read: false, decoder: 'steeringAngle', staleMs: 1500, qualifier: 'qualifierSteeringAngleDriver', validQualifiers: qualifierEnums.steering });
+candidate('steeringCrc', 'Steering wheel angle (CRC)', 'driving', 'Driver inputs', 'steeringChassis', 'ActualSteeringAngleDriver',
+    'actualValueSteeringAngleDriver', 65535, 'In retained Lab captures the packed 16-bit angle matches the no-CRC angle after swapping its bytes.',
+    { read: false, decoder: 'steeringAngle', swapBytes: true, staleMs: 1500,
+        qualifier: 'qualifierActualValueSteeringAngleDriver', validQualifiers: qualifierEnums.steering });
+candidate('frontAxleNative', 'Front axle effective steering angle (vehicle signal)', 'driving', 'Driver inputs',
+    'steeringChassis', 'SteeringAngleFrontAxleEffective', 'steeringAngleFrontAxleEffective', 65535,
+    'The packed word matches the centered XView front axle value after swapping bytes. Uses the ISTA effective front axle angle scale.',
+    { read: false, decoder: 'frontAxleAngle', swapBytes: true, staleMs: 1500, qualifier: 'qualifierSteeringAngleFrontAxleEffective',
+        validQualifiers: Object.assign({ 9: 'SIGNALWERT_IST_GUELTIG_UND_ABGESICHERT__ZUSTAND_S_STATUS_TEMPORAER' }, validSignal) });
 diagnostic('frontAxle', 'Front axle effective steering angle', 'sources', 'Driver inputs', 0x12, 0x58C6, 0, 2, {
-    unit: 'deg', scale: 0.00274658, offset: -89.99725342, pollMs: 100, pages: ['driving'],
+    unit: 'deg', scale: converters.frontAxleAngle.factor, offset: converters.frontAxleAngle.offset, pollMs: 100,
+    pages: ['driving'], fallbackFor: 'frontAxleNative',
     notes: 'ISTA DME8FF_R SG_FUNKTIONEN STG_STATUS_LENKWV_IST: actual front-axle steering angle, unsigned BE16 * 0.00274658 - 89.99725342 degrees. No qualifier or reserved raw range is documented in this diagnostic row. No assumed steering-wheel ratio or individual wheel toe geometry.' });
 diagnostic('rearAxle', 'Rear axle actual steering angle', 'sources', 'Driver inputs', 0x2B, 0xDB33, 0, 2, {
     unit: 'deg', scale: 0.002747, offset: -90, pollMs: 100, pages: ['driving'],
     diag: { minBytes: 11, validAt: 2, validValues: [1] },
     notes: 'ISTA HSR_G11 RES_0XDB33_D: actual rear-actuator angle BE16 * 0.002747 - 90 degrees, qualifier at byte 2 must equal 1 (valid); 8 initializing and 6 invalid are not angles. Not individually measured wheel toe.' });
+candidate('acceleratorNative', 'Accelerator pedal position (vehicle signal)', 'driving', 'Driver inputs', 'pedal', 'AngleAcceleratorPedal',
+    'actualValueAngleAcceleratorPedal', 4095, 'Upstream Live Data pedal conversion: raw * 0.025 percent, within 0-100 percent.',
+    { read: false, decoder: 'acceleratorPedal', staleMs: 1500,
+        qualifier: 'qualifierActualValueAngleAcceleratorPedal', validQualifiers: validSignal });
 candidate('accelerator', 'Accelerator pedal position', 'driving', 'Driver inputs', 'diagnostic', 'acceleratorPosition', 'value', null,
     'ISTA DME8FF_R for DME-88T0 N63TU3: IFPWG, UDS 22 480B, normalized pedal position; big-endian signed 16-bit * 0.01220703 percent. Only the physical 0-100 percent range is displayed.',
-    { instance: 'SystemFunctionsInternalTasuInst1', decoder: 'diagnosticPedal', staleMs: 1500, pollMs: 50,
+    { instance: 'SystemFunctionsInternalTasuInst1', decoder: 'diagnosticPedal', staleMs: 1500, pollMs: 50, fallbackFor: 'acceleratorNative',
         diag: { target: 0x12, sid: 0x22, did: 0x480B, at: 0, bytes: 2, signed: true, minBytes: 2 } });
 add('driveMode', 'Driving mode', 'driving', 'Drivetrain', { source: 'mode', field: 'statusFESVehicleDynamicSwitchHMI',
     member: 'actualValueModeDrivingExperience', read: true, decoder: 'mode', notes: 'Numeric and named wire enums are accepted. Seven variants were observed; invalid/reserved/initializing modes are rejected.' });
@@ -153,15 +178,21 @@ candidate('speed', 'Vehicle speed', 'sources', 'Motion', 'speed', 'statusCarSpee
     'BMW M Laptimer vehicle speed: raw / 64 km/h, converted to mph. Valid standstill zero is retained.', { decoder: 'speed' });
 candidate('rpm', 'Engine speed', 'driving', 'Drivetrain', 'engine', 'statusEngineSpeed2', 'actualValueRPMEngineCrankshaft', 65535,
     'BMW M Laptimer engine speed: raw / 4 rpm. Valid stopped-engine zero is retained.', { decoder: 'rpm' });
+candidate('gear', 'Actual transmission gear', 'driving', 'Drivetrain', 'vehicleInfo', 'statusGearboxDrive', 'statusActualGearDrive', null,
+    'Upstream Car Vitals gearbox gear. Change-driven notifications hold while the provider is connected.',
+    { read: false, decoder: 'gear', staleMs: Infinity });
+candidate('gearSelection', 'Transmission gear selection', 'driving', 'Drivetrain', 'vehicleInfo', 'DataPowerTrain2', 'statusGearSelectionDrive', null,
+    'Upstream Car Vitals fallback for explicit gear selection. Change-driven notifications hold while the provider is connected.',
+    { read: false, decoder: 'gearSelection', staleMs: Infinity });
 candidate('boostFes', 'Sport-display boost', 'sources', 'Drivetrain', 'mode', 'statusSwitchDriveDynamicSport2', 'displayBoostPressure', 255,
     'M Vitals sport-display source: raw * 0.01 bar, converted to psi. Notifications are delivered immediately; raw 255 is unavailable.',
     { decoder: 'boostFes', pollMs: 100, staleMs: 3000 });
-function pressure(id, name, pollMs, candidates, notes) {
-    const configs = candidates.map((c) => Object.assign({ target: 0x12, sid: 0x22, scale: 1, offset: 0 },
-        c, { minBytes: c.at + c.bytes }));
+function pressure(id, name, pollMs, candidates, notes, { page = 'sources', ...options } = {}) {
+    const configs = candidates.map((c) => Object.assign({ target: 0x12, sid: 0x22, scale: 1, offset: 0,
+        minBytes: c.at + c.bytes }, c));
     const first = configs[0];
-    diagnostic(id, name, 'sources', 'Drivetrain', first.target, first.did, first.at, first.bytes,
-        { unit: 'kPa', pollMs, staleMs: 3000, diag: first, diagCandidates: configs, notes });
+    diagnostic(id, name, page, 'Drivetrain', first.target, first.did, first.at, first.bytes,
+        Object.assign({ unit: 'kPa', pollMs, staleMs: 3000, diag: first, diagCandidates: configs, notes }, options));
 }
 pressure('barometricPressure', 'Ambient absolute pressure', 60000, [
     { did: 0xF433, at: 0, bytes: 1, physicalMin: 50, physicalMax: 115 },
@@ -234,8 +265,13 @@ candidate('tyreTemperatureUnit', 'Reported tire temperature unit', 'sources', 'T
 });
 ['FLH', 'FRH', 'RLH', 'RRH'].forEach((wheel, index) => {
     const diag = { minBytes: 19, qualityAt: 15 + index };
+    const rawId = 'wheelSpeedRaw' + wheel;
+    candidate(rawId, 'Wheel speed ' + wheel + ' (raw)', 'driving', 'Motion', 'powertrain', 'ActualValueRPMWheel',
+        wheel === 'FRH' ? 'actualValueRPMwheelFRH' : 'actualValueRPMWheel' + wheel, 65534,
+        'Upstream Live Data wheel-speed word. Each wheel has its own validity qualifier. Physical conversion is unknown.',
+        { read: false, decoder: 'unscaled', staleMs: 2000, qualifier: 'qualifierActualValueRPMWheel' + wheel, validQualifiers: validSignal });
     diagnostic('wheelSpeed' + wheel, 'Wheel speed ' + wheel, 'sources', 'Motion', 0x29, 0xDBE4, index * 2, 2, {
-        unit: 'mph', scale: 0.01 / 1.609344, pollMs: 100, staleMs: 2000, pages: ['driving'],
+        unit: 'mph', scale: 0.01 / 1.609344, pollMs: 100, staleMs: 2000, pages: ['driving'], fallbackFor: rawId,
         diag: Object.assign({ signed: true }, diag),
         notes: 'ISTA IB_G05 RES_0XDBE4_D: wheel-specific signed BE16 / 100 km/h, converted to mph. Own signal quality must be >50% and <=100%. Direction is independently reported, not inferred from gear or speed.' });
     diagnostic('wheelDirection' + wheel, 'Wheel direction ' + wheel, 'sources', 'Motion', 0x29, 0xDBE4, 10 + index, 1, {
@@ -310,7 +346,7 @@ diagnostic('transferCase', 'Transfer-case clutch lamella model', 'temperatures',
     unit: 'F', scale: 1.8 / 4194304, offset: 32, diag: { signed: true, minBytes: 59 }, pollMs: 5000,
     notes: 'ISTA LMV_G11 RES_0X4004_D STAT_TMPBLADE: signed BE32 / 4194304 Celsius, simulated clutch-lamella temperature, not measured case/oil temperature. Saved real response reports 47.96875 C.' });
 add('rearDifferential', 'Rear-differential temperature', 'temperatures', 'Drivetrain', {
-    numeric: true, unit: 'F', notes: 'No validated rear-differential oil/case temperature source or fitted sensor mapping in the available vehicle evidence. Transfer-case clutch and ECU temperatures are not substituted.' });
+    numeric: true, unit: 'F', notes: 'BMW G15 training identifies a differential oil-temperature sensor on GHAS. A corresponding read identifier and scale were unavailable in the accessible ISTA definitions.' });
 for (let i = 1; i <= 4; i++) {
     candidate('sensor' + i, 'Sensor slot ' + i + ' serial / ID', 'sources', 'Tires / TPMS: unknown positions',
         'sensors', 'tpmsInternalLastValues', 'tpmsInternalLastSensorSerNoId' + i, 2147483647,
@@ -326,13 +362,71 @@ diagnostic('fuelHighActual', 'High-pressure fuel (actual)', 'health', 'Fuel syst
     unit: 'psi', scale: 0.1 * 14.503773773020923, physicalMin: 0, physicalMax: 500 * 14.503773773020923,
     pages: ['health', 'temperatures'],
     notes: 'Car Vitals UDS F423 / OBD PID 23: direct-injection fuel rail gauge pressure, unsigned BE16 * 0.1 bar, displayed in psi. This is the configured DME reading, not separate bank-specific rail coverage; absolute F459 is not substituted.' });
-diagnostic('fuelLowActual', 'Low-pressure fuel (actual)', 'health', 'Fuel system', 0x12, 0xF40A, 0, 1, {
-    unit: 'psi', scale: 0.03 * 14.503773773020923, physicalMin: 0.5 * 14.503773773020923, physicalMax: 8 * 14.503773773020923,
-    pages: ['health', 'temperatures'],
-    notes: 'Car Vitals UDS F40A / OBD PID 0A: low-pressure fuel supply gauge pressure, unsigned byte * 0.03 bar, displayed in psi. Manifold-relative F422 / OBD PID 22 is a different pressure reference and is not substituted.' });
-[['oilPressure', 'Oil pressure (actual)', 'Oil pressure'], ['fuelHighTarget', 'High-pressure fuel (target)', 'Fuel system'],
-    ['fuelLowTarget', 'Low-pressure fuel (target)', 'Fuel system']].forEach((item) =>
-    add(item[0], item[1], 'health', item[2], { pages: ['health', 'temperatures'] }));
+pressure('fuelLowActual', 'Low-pressure fuel (actual)', 2000, [
+    { did: 0xF40A, at: 0, bytes: 1 },
+    { sid: 0x01, did: 0x0A, at: 0, bytes: 1 },
+].map((c) => Object.assign({ scale: 0.03 * 14.503773773020923, physicalMin: 0.5 * 14.503773773020923,
+    physicalMax: 8 * 14.503773773020923 }, c)),
+    'Car Vitals fuel supply gauge pressure via F40A or OBD PID 0A. ECU-reported when supported; BMW N63TU3 training describes a supply system without a low-pressure sensor.',
+    { unit: 'psi', staleMs: 10000, page: 'status' });
+add('fuelLowTarget', 'Low-pressure fuel (target)', 'status', 'Fuel system', {
+    numeric: true, unit: 'psi', notes: 'No low-pressure fuel setpoint was identified in upstream, the retained BM3 catalog, or the available ISTA definitions.' });
+
+temperature('chargeAirBank2', 'Pre-throttle charge air / bank 2', 'status', 'Air', 0x13, 0x59D4, 2, 0.0234375, -273.15, {
+    physicalMin: -40, physicalMax: 215,
+    notes: 'Upstream Live Data 59D4 pre-throttle charge air conversion, read from DME 2. BMW N63TU3 training shows this sensor on each DME.' });
+temperature('outsideDme', 'Outside air (DME)', 'sources', 'Air', 0x12, 0x5512, 1, 0.5, -40, {
+    physicalMin: -40, physicalMax: 85, pollMs: 5000, fallbackFor: 'outside',
+    notes: 'Upstream Live Data DME8FF_R 5512 ambient temperature, byte * 0.5 - 40 Celsius.' });
+preferred('outsideStatus', 'Outside air', 'Air', ['outside', 'outsideDme'], 'Prefer the vehicle ambient signal, then upstream DME ambient temperature.');
+
+const psiPerKpa = 0.14503773773020923;
+const absolutePsi = { unit: 'psi', staleMs: 10000 };
+pressure('statusFuelHighActual', 'High-pressure fuel (actual, absolute)', 2000, [
+    { did: 0x58EF, at: 0, bytes: 2, scale: 0.5 * psiPerKpa, physicalMax: 50000 * psiPerKpa },
+    { did: 0x5658, at: 0, bytes: 2, scale: 2 * psiPerKpa, physicalMax: 50000 * psiPerKpa },
+    { did: 0xF459, at: 0, bytes: 2, scale: 10 * psiPerKpa, physicalMax: 50000 * psiPerKpa },
+], 'Upstream Live Data rail actual pressure, then Car Vitals absolute rail pressure. Same absolute reference as the target.', absolutePsi);
+pressure('fuelHighTarget', 'High-pressure fuel (target, absolute)', 2000, [
+    { did: 0x5837, at: 0, bytes: 2, scale: 0.5 * psiPerKpa, physicalMax: 50000 * psiPerKpa },
+    { did: 0x56C1, at: 0, bytes: 2, scale: 2 * psiPerKpa, physicalMax: 50000 * psiPerKpa },
+], 'Upstream Live Data DME8FF_R rail-pressure control target in absolute pressure.', absolutePsi);
+pressure('statusAmbientPressure', 'Ambient pressure', 5000, [
+    { did: 0x4201, at: 0, bytes: 2, scale: 0.00390625, physicalMin: 50, physicalMax: 115 },
+    { did: 0xF433, at: 0, bytes: 1, physicalMin: 50, physicalMax: 115 },
+    { sid: 0x01, did: 0x33, at: 0, bytes: 1, physicalMin: 50, physicalMax: 115 },
+], 'Upstream Live Data 4201 and Car Vitals barometric pressure candidates.', { staleMs: 20000 });
+function saeBoost(did, at, bit, sid) {
+    return { did, at, sid, bytes: 2, scale: 1 / 32, physicalMin: 20, physicalMax: 600,
+        minBytes: 10, validAt: 0, validMask: bit, validValues: [bit] };
+}
+pressure('statusBoostTargetAbsolute', 'Boost target (absolute)', 1500, [
+    { did: 0x4AB0, at: 0, bytes: 2, scale: 0.00390625, physicalMin: 20, physicalMax: 400 },
+    saeBoost(0xF470, 1, 1, 0x22), saeBoost(0x70, 1, 1, 0x01),
+], 'Upstream Car Vitals BMW target and SAE PID 70 target A.', { staleMs: 10000 });
+pressure('statusBoostActualAbsolute', 'Boost actual (absolute)', 1500, [
+    { did: 0x4205, at: 0, bytes: 2, scale: 0.0078125, physicalMin: 20, physicalMax: 550 },
+    { did: 0x57C1, at: 0, bytes: 2, scale: 0.0078125, physicalMin: 20, physicalMax: 550 },
+    saeBoost(0xF470, 3, 2, 0x22), saeBoost(0x70, 3, 2, 0x01),
+], 'Upstream Live Data pre-throttle charge pressure, then SAE PID 70 actual A.', { staleMs: 10000 });
+pressure('oilPressureAbsolute', 'Oil pressure (absolute)', 2000, [
+    { did: 0x4436, at: 0, bytes: 2, scale: 0.1, physicalMax: 1200 },
+    { did: 0x586F, at: 0, bytes: 2, signed: true, scale: 0.1, physicalMin: 0, physicalMax: 1200 },
+], 'Upstream Live Data oil pressure candidates in absolute hPa, converted to kPa.', { staleMs: 10000 });
+[
+    ['statusBoostTarget', 'Boost target', 'statusBoostTargetAbsolute'],
+    ['statusBoostActual', 'Boost actual', 'statusBoostActualAbsolute'],
+    ['oilPressure', 'Oil pressure', 'oilPressureAbsolute'],
+].forEach(([id, name, input]) => add(id, name, 'status', 'Pressures', { kind: 'derived', numeric: true,
+    unit: 'psi', dependsOn: [input, 'statusAmbientPressure'], ambientAdjusted: true, staleMs: 10000,
+    notes: 'Gauge pressure in PSI from the reported absolute pressure and measured ambient pressure.' }));
+[0x12, 0x13].forEach((target, index) => diagnostic('knockDme' + (index + 1), 'Knock flag DME ' + (index + 1),
+    'status', 'Combustion', target, 0x4A36, 0, 1, { unit: '', scale: 1, physicalMin: 0, physicalMax: 1,
+        pollMs: 1000, staleMs: 8000, notes: 'Upstream Live Data and Redline 4A36: current knock detection flag, 0 or 1.' }));
+[0x4B23, 0x4B24, 0x4B25, 0x4B30, 0x4B31, 0x4B32, 0x4B33, 0x4B34].forEach((did, index) =>
+    diagnostic('misfire' + (index + 1), 'Cylinder ' + (index + 1) + ' misfire counter',
+        'status', 'Combustion', 0x12, did, 0, 2, { unit: 'count', physicalMax: 65534, pollMs: 5000, staleMs: 20000,
+            notes: 'Upstream Live Data DME8FF_R whole-engine counters. Displays the current counter reported for this physical cylinder.' }));
 for (let cylinder = 1; cylinder <= 8; cylinder++) {
     const identity = 'C' + cylinder + ' is a requested cylinder identity, not an established physical/DME mapping. ';
     add('timingCorrection' + cylinder, 'C' + cylinder + ' timing correction', 'health', 'Cylinder timing correction', {
@@ -345,13 +439,6 @@ for (let cylinder = 1; cylinder <= 8; cylinder++) {
             'ISTA DME8FF_R/L SPG_KLOPF_ZYL1..6 identifies voltage-time knock signal, unsigned BE32 * 0.05 / 65536 V*ms; fractional values are expected, not fractional event counts. ' +
             'IUKZ1..6 is a different normalized reference level. Both-DME physical C1-C8 mapping is unresolved, so no guessed requests or per-cylinder values are supplied. ' +
             'C5/C1 through C8/C4 is the requested display arrangement, not a proven physical orientation. Peaks are signal maxima, not summed events.' });
-    add('misfire' + cylinder, 'C' + cylinder + ' misfire count', 'health', 'Cylinder misfires', {
-        numeric: true, unit: 'count', notes: identity +
-            'No validated count source on this dual-DME V8. Car Vitals probes OBD service 06 / UDS F6xx monitors from MID A2 ' +
-            'on one configured ECU; both-DME coverage and C1-C8 mapping are unconfirmed. Requested TID 0C intends this driving cycle, ' +
-            'but its fallback to the first returned test does not establish the actual counter period. No diagnostic request is issued here. ' +
-            'Count is the intended quantity only; source, count semantics and period require vehicle validation. ' +
-            'Displayed peak is the largest observed counter value since Reset, never a sum or inferred trip count.' });
 }
 const modeNames = { 1: 'SPORT_DYNAMIC', 2: 'SPORT_EXPERT', 3: 'SPORT_INDIVIDUAL', 4: 'COMFORT', 5: 'COMFORT_PLUS',
     6: 'COMFORT_INDIVIDUAL', 7: 'ECO_PRO_EFFICIENT', 8: 'ECO_PRO_PLUS', 9: 'ECO_PRO_INDIVIDUAL', 10: 'ADAPTIVE' };
@@ -366,7 +453,11 @@ function decode(d, raw) {
         }
         return { state: 'live', value: h.rawLengthMeter * 3.280839895013123, unit: 'ft', quality: '3D fix; heightValid' };
     }
-    const value = raw[d.member], qualifier = d.qualifier ? raw[d.qualifier] : undefined;
+    let value = raw[d.member];
+    const qualifier = d.qualifier ? raw[d.qualifier] : undefined;
+    if (d.swapBytes && Number.isInteger(value) && value >= 0 && value <= 65535) {
+        value = (value & 255) * 256 + (value >>> 8);
+    }
     if (d.qualifier && !(typeof qualifier === 'number' ? Number.isInteger(qualifier) &&
         Object.prototype.hasOwnProperty.call(d.validQualifiers || {}, qualifier) :
         typeof qualifier === 'string' && Object.values(d.validQualifiers || {}).includes(qualifier))) {
@@ -378,6 +469,16 @@ function decode(d, raw) {
             PARKBREMSE_IM_STELLVORGANG_LOESEN: 'RELEASING', PARKBREMSE_IM_STELLVORGANG_FESTSTELLEN: 'LOCKING' };
         return Object.prototype.hasOwnProperty.call(states, value) ? { state: 'live', value: states[value], quality: 'Vehicle2 mechanical parking-brake state' } :
             { state: 'unavailable', note: 'Parking-brake interface unavailable, faulted or unfilled' };
+    }
+    if (d.decoder === 'gear' || d.decoder === 'gearSelection') {
+        const selection = d.decoder === 'gearSelection';
+        const nonForward = selection ? [1, 2, 3, 4, 'N', 'R', 'P', 'NP'].includes(value) :
+            [1, 2, 'R', 'N_OR_P'].includes(value) || [1, 2, 3, 'P', 'R', 'N'].includes(raw.statusActualStageDrive);
+        if (nonForward) return { state: 'live', value: 0 };
+        const named = typeof value === 'string' && (selection ? /^_([1-9])$/ : /^G([1-9]|10)$/).exec(value);
+        const gear = named ? Number(named[1]) : Number.isInteger(value) ? value - (selection ? 4 : 2) : NaN;
+        return gear >= 1 && gear <= (selection ? 9 : 10) ? { state: 'live', value: gear } :
+            { state: 'invalid', note: 'Gear is initializing, unavailable or unrecognized' };
     }
     if (d.decoder === 'binary') return value === 0 || value === 1 ?
         { state: 'live', value: d.labels[value], quality: 'Documented diagnostic switch enum' } :

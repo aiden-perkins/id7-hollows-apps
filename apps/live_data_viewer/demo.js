@@ -6,11 +6,13 @@ const units = {
     rpm: 'rpm', speed: 'mph', boost: 'psi', torque: 'lb-ft', horsepower: 'hp',
     brakePressure: 'bar', accelerator: '%', steering: 'deg', frontAxle: 'deg', rearAxle: 'deg', gLat: 'g', gLong: 'g', gForce: 'g', altitude: 'ft',
     voltage: 'V', tankTotal: 'L', tankLeft: 'L', tankRight: 'L',
-    oil: 'F', coolant: 'F', oilCds: 'F', coolantCds: 'F', transmission1: 'F', transmission2: 'F', transmissionDa12: 'F', converter: 'F',
+    oil: 'F', coolant: 'F', oilCds: 'F', coolantCds: 'F', transmission1: 'F', transmission2: 'F', converter: 'F',
     iat: 'F', iatBank1: 'F', iatBank2: 'F', outside: 'F', chargeAir: 'F', preThrottleAir: 'F', cabin: 'F',
     chargeCoolerCoolant: 'F', exhaustBank1: 'F', exhaustBank2: 'F', catalystBank1: 'F', catalystBank2: 'F',
     transferCase: 'F', rearDifferential: 'F', frontPower: 'hp', rearPower: 'hp', rearTorqueShare: '%',
     oilPressure: 'psi', transmissionPressure: 'psi', fuelHighActual: 'psi', fuelHighTarget: 'psi', fuelLowActual: 'psi', fuelLowTarget: 'psi',
+    statusFuelHighActual: 'psi', statusBoostActual: 'psi', statusBoostTarget: 'psi', outsideStatus: 'F', chargeAirBank2: 'F',
+    knockDme1: 'flag', knockDme2: 'flag',
 };
 ['Front', 'Rear'].forEach((axle) => {
     units['sway' + axle + 'Current'] = 'A'; units['sway' + axle + 'Torque'] = 'Nm';
@@ -70,7 +72,7 @@ class Demo {
             'SHARP ' + direction + (turnAt < 1.6 ? ' / TURN-IN' : turnAt < 3.5 ? ' / HOLD' : ' / UNWIND');
         const horsepower = data.torque * data.rpm * (2 * Math.PI / 60) / 745.6998715822702;
         const values = {
-            rpm: data.rpm, speed: data.speed / 1.609344, boost: data.boost * 14.503773773020923,
+            rpm: data.rpm, gear: data.gear, speed: data.speed / 1.609344, boost: data.boost * 14.503773773020923,
             torque: data.torque * 0.7375621492772656, horsepower,
             brakePressure: Math.max(0, -data.gLong) * 70, accelerator: data.throttle * 100,
             steering: lateralG * 32, frontAxle: lateralG * 4, rearAxle: -lateralG * 0.8, gLat: lateralG, gLong: data.gLong,
@@ -79,10 +81,10 @@ class Demo {
             tankTotal: tank, tankLeft: tank * 0.499, tankRight: tank * 0.501,
             oil: data.oil * 1.8 + 32, coolant: data.coolant * 1.8 + 32,
             oilCds: data.oil * 1.8 + 32, coolantCds: data.coolant * 1.8 + 32,
-            transmissionDa12: 188 + Math.sin(seconds / 23) * 4,
             transmission1: 185 + wave * 4, transmission2: 188 + Math.sin(seconds / 23) * 4, converter: 197 + wave * 5,
             iat: 90 + data.throttle * 10,
             iatBank1: 91 + data.throttle * 9, iatBank2: 94 + data.throttle * 8, outside: 68 + wave,
+            outsideStatus: 68 + wave, chargeAirBank2: 94 + data.throttle * 13,
             chargeAir: 89 + data.throttle * 12, preThrottleAir: 92 + data.throttle * 13, cabin: 72 + wave * 0.5,
             chargeCoolerCoolant: 85 + data.throttle * 10, exhaustBank1: 650 + data.throttle * 450,
             exhaustBank2: 665 + data.throttle * 440, catalystBank1: 790 + data.throttle * 380,
@@ -94,6 +96,9 @@ class Demo {
             exhaustLeft: data.throttle > 0.5 ? 'OPEN' : 'CLOSED',
             oilPressure: 32 + data.rpm / 150, transmissionPressure: 72 + data.throttle * 18,
             fuelHighActual: highTarget + wave * 35, fuelHighTarget: highTarget, fuelLowActual: 74 + wave * 2, fuelLowTarget: 75,
+            statusFuelHighActual: highTarget + wave * 35,
+            statusBoostActual: data.boostActual * 14.503773773020923, statusBoostTarget: data.boostTarget * 14.503773773020923,
+            knockDme1: Number(data.throttle > 0.95), knockDme2: 0,
             driveMode: this.driveMode, traction: 'DSC ON',
             parkingBrake: 'RELEASED', kickdown: data.throttle > 0.9 ? 'ENGAGED' : 'RELEASED',
             brakePedal: data.gLong < -0.1 ? 'PRESSED' : 'RELEASED',
@@ -120,7 +125,7 @@ class Demo {
             values['wheelDirection' + wheel] = data.speed > 0.1 ? 'FORWARD' : 'STANDSTILL';
         });
         for (let cylinder = 1; cylinder <= 8; cylinder++) {
-            values['timingCorrection' + cylinder] = -(cylinder % 4) * 0.4 - data.throttle * 0.2;
+            values['timingCorrection' + cylinder] = -cylinder * 0.3 - data.throttle * 0.2;
             values['misfire' + cylinder] = cylinder === 6 ? Math.floor(seconds / 46) : 0;
             values['knock' + cylinder] = 0.06 + cylinder * 0.009 + data.throttle * 0.04 + wave * 0.004;
         }

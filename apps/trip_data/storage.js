@@ -5,6 +5,8 @@ const crypto = require('crypto');
 const C = require('./calculations');
 
 const validId = (id) => typeof id === 'string' && /^trip-[a-z0-9]+-[a-f0-9]{12}$/.test(id);
+const bulkDeletable = (s) => !s.demo && s.status !== 'recording' && s.favorite !== true;
+const deletedDirectory = /^\.deleted-trip-[a-z0-9]+-[a-f0-9]{12}-[a-f0-9]{12}$/;
 function token() { return crypto.randomBytes(6).toString('hex'); }
 function atomic(file, value) {
     const temporary = file + '.' + token() + '.tmp';
@@ -26,18 +28,18 @@ class Storage {
         }
     }
     settings() {
-        const defaults = { schemaVersion: 1, units: 'US', precision: 3, dateFormat: 'US12', sampleMs: 1000,
-            automatic: false, engineSessionHold: false, altitudeThresholdFt: 10, smoothing: false, speedBands: Array.from({ length: 20 }, (_, i) => 10 + i * 10) };
+        const defaults = { schemaVersion: 1, units: 'US', precision: 3, dateFormat: 'US12',
+            automatic: false, engineSessionHold: false, smoothing: true, speedBands: Array.from({ length: 20 }, (_, i) => 10 + i * 10) };
         try {
             const s = JSON.parse(fs.readFileSync(path.join(this.dir, 'settings.json'), 'utf8'));
             if (!s || s.schemaVersion !== 1 || s.units !== 'US' || s.precision !== 3 || s.dateFormat !== 'US12' ||
-                ![500, 1000, 2000].includes(s.sampleMs) || typeof s.automatic !== 'boolean' || typeof s.smoothing !== 'boolean' ||
+                typeof s.automatic !== 'boolean' || s.smoothing !== undefined && typeof s.smoothing !== 'boolean' ||
                 s.engineSessionHold !== undefined && typeof s.engineSessionHold !== 'boolean' ||
-                ![5, 10, 20].includes(s.altitudeThresholdFt) || !Array.isArray(s.speedBands) || (s.speedBands.length < 1 || s.speedBands.length > 64) ||
+                !Array.isArray(s.speedBands) || (s.speedBands.length < 1 || s.speedBands.length > 64) ||
                 !s.speedBands.every((v, i) => Number.isFinite(v) && v > 1 && v <= 250 && (!i || v > s.speedBands[i - 1]))) throw new Error('Unsupported or invalid settings');
             // Apply the requested bands to future recordings; saved trip policies remain immutable.
-            return Object.assign(defaults, { sampleMs: s.sampleMs, automatic: s.automatic, engineSessionHold: s.engineSessionHold === true,
-                altitudeThresholdFt: s.altitudeThresholdFt, smoothing: s.smoothing });
+            return Object.assign(defaults, { automatic: s.automatic, engineSessionHold: s.engineSessionHold === true,
+                smoothing: s.smoothing !== false });
         } catch (e) {
             if (e.code !== 'ENOENT') { this.settingsBlocked = true; this.errors.push('Settings preserved: ' + e.message); }
             return defaults;
@@ -64,6 +66,7 @@ class Storage {
         if (!s || ![1, 2].includes(s.schemaVersion) || s.id !== id || !s.policy || ![1, 2, 3, 4].includes(s.policy.calculationVersion) ||
             !s.stats || !Number.isFinite(s.stats.durationMs) || s.stats.durationMs < 0 ||
             !['recording', 'finished', 'interrupted'].includes(s.status) || typeof s.name !== 'string' ||
+            s.favorite !== undefined && typeof s.favorite !== 'boolean' ||
             !Number.isFinite(s.startedAt) || !Array.isArray(s.gaps)) throw new Error('Invalid or unsupported trip summary; preserved');
         if (s.policy.calculationVersion === 2 && (!Number.isFinite(s.stats.distanceMs) || s.stats.distanceMs < 0 ||
             !Number.isFinite(s.stats.movingDistanceMs) || s.stats.movingDistanceMs < 0 ||
@@ -86,14 +89,14 @@ class Storage {
     index() {
         if (this.indexBlocked) return;
         try {
-            const trips = this.history().map((s) => ({ id: s.id, name: s.name, startedAt: s.startedAt, status: s.status }));
+            const trips = this.history().map((s) => ({ id: s.id, name: s.name, startedAt: s.startedAt, status: s.status, favorite: s.favorite === true }));
             atomic(path.join(this.trips, 'index.json'), { schemaVersion: 2, trips });
         } catch (e) { this.errors.push('Trip summaries saved; index update failed: ' + e.message); this.errors = this.errors.slice(-10); }
     }
     create(settings) {
         const id = 'trip-' + Date.now().toString(36) + '-' + token();
         fs.mkdirSync(path.join(this.trips, id));
-        const summary = { schemaVersion: 2, id, name: 'Trip ' + new Date().toISOString(), annotation: '',
+        const summary = { schemaVersion: 2, id, name: 'Trip ' + new Date().toISOString(), annotation: '', favorite: false,
             status: 'recording', startedAt: Date.now(), endedAt: null, updatedAt: Date.now(), sequence: 0,
             policy: C.policy(settings), gaps: [], missingWallMs: 0, lastWallAt: null, timelineMs: 0,
             sources: require('./sources').DEFINITIONS, sourceNotes: require('./sources').NOTES };
@@ -160,23 +163,49 @@ class Storage {
         summary.name = name.trim(); summary.annotation = annotation.trim(); this.save(summary); this.index();
         return summary;
     }
-    delete(id) {
+    setFavorite(id, favorite) {
+        const summary = this.read(id);
+        summary.favorite = favorite === true;
+        this.save(summary); this.index();
+        return summary;
+    }
+    remove(id, protectFavorites) {
         const summary = this.read(id);
         if (summary.status === 'recording') throw new Error('Close or recover the interrupted recording before deletion');
+        if (protectFavorites && !bulkDeletable(summary)) throw new Error('Trip is protected from bulk deletion');
         const dir = this.directory(id), names = fs.readdirSync(dir);
         names.forEach((name) => {
             if (!/^(summary\.json|samples-[0-9]{9}\.jsonl)(\.[a-f0-9]{12}\.tmp)?$/.test(name)) throw new Error('Unknown file in trip directory; nothing deleted');
             const info = fs.lstatSync(path.join(dir, name));
             if (!info.isFile() || info.isSymbolicLink()) throw new Error('Unexpected trip entry; nothing deleted');
         });
-        names.forEach((name) => fs.unlinkSync(path.join(dir, name)));
-        fs.rmdirSync(dir); this.index();
+        // Remove the recording from History as one operation before cleaning up its files.
+        const removed = path.join(this.trips, '.deleted-' + id + '-' + token());
+        fs.renameSync(dir, removed);
+        try {
+            names.forEach((name) => fs.unlinkSync(path.join(removed, name)));
+            fs.rmdirSync(removed);
+        } catch (e) {
+            this.errors.push('Trip removed from History. File cleanup incomplete: ' + e.message);
+        }
+    }
+    delete(id) { this.remove(id, false); this.index(); }
+    deleteMany(ids) {
+        let deleted = 0;
+        const failures = [];
+        for (const id of new Set(ids)) {
+            try { this.remove(id, true); deleted++; }
+            catch (e) { failures.push(id + ': ' + e.message); }
+        }
+        if (deleted) this.index();
+        return { deleted, failures };
     }
     usage() {
         let bytes = 0; this.usageIncomplete = false;
-        fs.readdirSync(this.trips).filter(validId).forEach((id) => {
+        fs.readdirSync(this.trips).filter((id) => validId(id) || deletedDirectory.test(id)).forEach((id) => {
             try {
-                const dir = this.directory(id);
+                const dir = validId(id) ? this.directory(id) : path.join(this.trips, id);
+                if (!fs.lstatSync(dir).isDirectory()) throw new Error('Unsafe trip storage path');
                 fs.readdirSync(dir).forEach((n) => { const st = fs.lstatSync(path.join(dir, n)); if (st.isFile() && !st.isSymbolicLink()) bytes += st.size; });
             } catch (e) { this.usageIncomplete = true; this.errors.push('Storage usage incomplete: ' + e.message); }
         });
@@ -184,4 +213,4 @@ class Storage {
         return bytes;
     }
 }
-module.exports = { Storage, validId };
+module.exports = { Storage, validId, bulkDeletable };

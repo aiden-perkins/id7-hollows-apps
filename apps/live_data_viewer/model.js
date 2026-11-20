@@ -122,6 +122,13 @@ class Model {
             return { state: 'live', value: bar * 14.503773773020923, unit: 'psi',
                 quality: 'TPMS normalized from reported vehicle pressure unit ' + unit.value };
         }
+        if (d.ambientAdjusted) {
+            const [pressure, ambient] = d.dependsOn.map((id) => this.state(definitionsById[id]));
+            const unavailable = [pressure, ambient].find((sample) => sample.state !== 'live');
+            if (unavailable) return { state: unavailable.state, note: 'Requires fresh absolute and ambient pressure' };
+            return { state: 'live', value: (pressure.value - ambient.value) * 0.14503773773020923,
+                unit: 'psi', quality: 'Gauge pressure relative to measured ambient' };
+        }
         if (d.id === 'boostDme') {
             const absolute = this.state(definitionsById.boostAbsolute);
             if (absolute.state !== 'live') return { state: absolute.state,

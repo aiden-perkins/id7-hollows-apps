@@ -2,10 +2,9 @@
   "id": "pong",
   "title": "Pong",
   "description": "Pong against a computer opponent, with knob and touch controls, difficulty settings, and saved matches",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "vendor": "custom",
   "loggingId": "OA9F",
-  "maxDiskUsage": 1048576,
   "signals": {
     "de.bmw.infotainment.vehicle.Vehicle2": {
       "statusCarSpeed2": "rs"

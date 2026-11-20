@@ -2,7 +2,7 @@
   "id": "trip_data",
   "title": "Trip Data",
   "description": "Trip dashboard with vehicle-style tabs, trip history and independent recording recovery",
-  "version": "1.7.0",
+  "version": "1.8.0",
   "vendor": "custom",
   "loggingId": "OA9F",
   "iconGlyph": "TRIP",
@@ -42,10 +42,7 @@
       "title": "Trip Data",
       "graphic": "MAIN_GFX",
       "buttons": [
-        ["BTN_RECORD", "Start trip"],
-        ["BTN_CURRENT", "Current trip"],
-        ["BTN_OPTIONS", "Options"],
-        ["BTN_BACK", "Back"],
+        ["BTN_RECORD", "Trip"],
         ["BTN_SETTINGS", "Settings"]
       ]
     },
@@ -67,18 +64,8 @@
         ],
         [
           "button",
-          "PREF_DETAIL",
-          "Recording interval"
-        ],
-        [
-          "button",
           "PREF_AUTO",
           "Automatic engine-session recording"
-        ],
-        [
-          "button",
-          "PREF_ALTITUDE",
-          "Elevation noise deadband"
         ],
         [
           "button",
@@ -104,11 +91,6 @@
           "button",
           "PREF_RETRY",
           "Retry vehicle providers"
-        ],
-        [
-          "button",
-          "PREF_BACK",
-          "Back to dashboard"
         ]
       ]
     }
@@ -120,7 +102,7 @@
     },
     {
       "key": "section", "label": "Initial page", "type": "choice", "default": "trip",
-      "options": [["trip", "Trip"], ["elevation", "Elevation"], ["fuel", "Fuel"], ["gears", "Gears"], ["history", "History"]]
+      "options": [["trip", "Trip"], ["elevation", "Elevation"], ["fuel", "Fuel"], ["gears", "Gears"], ["history", "History"], ["records", "Records"]]
     }
   ]
 }

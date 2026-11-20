@@ -7,6 +7,7 @@ const drivingFast = new Set([
     'swayFrontMotorActual', 'swayRearMotorActual', 'rearTorqueShare',
     'rpm', 'torque', 'gLat', 'gLong', 'horsepower', 'frontPower', 'rearPower', 'gForce',
 ]);
+const notificationFeeds = new WeakMap();
 function deadline(promise, ms, label) {
     let timer;
     return Promise.race([Promise.resolve(promise), new Promise((resolve, reject) => {
@@ -29,7 +30,40 @@ class Services {
     alive(c) { return !this.closed && !c.closed && this.connections[c.key] === c; }
     dispose(c) {
         c.closed = true; clearTimeout(c.waitTimer);
+        if (c.detach) c.detach();
         if (c.proxy && c.proxy.shutdown) Promise.resolve().then(() => c.proxy.shutdown()).catch((e) => this.ctx.log.warn(e));
+    }
+    async watchNotifications(c) {
+        const { key, iface, instance, fields } = c.def;
+        let feeds = notificationFeeds.get(this.signals);
+        if (!feeds) {
+            feeds = new Map();
+            notificationFeeds.set(this.signals, feeds);
+        }
+        let feed = feeds.get(key);
+        if (!feed) {
+            const listeners = new Set(), handlers = {};
+            D.definitions.filter((d) => !d.diag && D.sourceKey(d) === key).forEach(({ field }) => {
+                handlers[field] = (raw) => listeners.forEach((receive) => receive(field, raw));
+            });
+            // The emulator keeps watch handlers for the session. Reuse the watch across tab and demo changes.
+            feed = { listeners, ready: Promise.resolve().then(() => this.signals.watch(iface, instance, handlers, this.ctx.log)) };
+            feeds.set(key, feed);
+        }
+        const receive = (field, raw) => {
+            if (this.alive(c) && fields[field]) this.model.receive(key, field, raw, 'notification');
+        };
+        feed.listeners.add(receive);
+        c.detach = () => feed.listeners.delete(receive);
+        try {
+            const watch = await deadline(feed.ready, 5000, 'Vehicle notification subscription');
+            if (watch.error) throw new Error(watch.error);
+        } catch (error) {
+            if (this.alive(c)) {
+                this.dispose(c);
+                this.model.transport(key, null, 'unavailable', error.message);
+            }
+        }
     }
     activate(ids, force, page) {
         if (this.closed) return;
@@ -51,7 +85,7 @@ class Services {
             }
             return d;
         });
-        this.diagnostic.activate(active.filter((d) => d.diag));
+        this.diagnostic.activate(active.filter((d) => d.diag), page);
         active.filter((d) => d.source && !d.diag).forEach((d) => {
             const key = D.sourceKey(d);
             if (!wanted[key]) wanted[key] = { key, iface: D.IF[d.source], instance: d.instance || '1', fields: {} };
@@ -82,6 +116,7 @@ class Services {
         this.connections[c.key] = c;
         this.model.transport(c.key, null, 'waiting', 'Connecting to vehicle provider');
         if (!this.signals.hasNative()) {
+            if (!this.ctx.preview && typeof this.signals.watch === 'function') return this.watchNotifications(c);
             this.model.transport(c.key, null, 'unavailable', this.ctx.preview ? 'Preview has no live vehicle feed' : 'SOME/IP native module unavailable');
             return;
         }

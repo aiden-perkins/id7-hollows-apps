@@ -1,8 +1,8 @@
 {
   "id": "live_data_viewer",
   "title": "Live Data Viewer",
-  "description": "Driving dynamics and performance, temperatures, engine health and a fixed dual-DME BM3 channel grid",
-  "version": "1.9.0",
+  "description": "Driving dynamics, Car Status and a dual-DME BM3 channel grid",
+  "version": "1.10.0",
   "vendor": "custom",
   "loggingId": "OA9E",
   "iconGlyph": "LIVE",
@@ -30,6 +30,11 @@
     "de.bmw.infrastructure.EnvironmentalInformation": {
       "ExteriorTemperature": "s"
     },
+    "de.bmw.infrastructure.VehicleInformation": {
+      "_optional": "Driving shift RPM markers",
+      "statusGearboxDrive": "s",
+      "DataPowerTrain2": "s"
+    },
     "de.bmw.infotainment.vehicle.CDS2": {
       "statusLongitudinalAccelerationMassCenter": "rs",
       "statusLateralAccelerationMassCenter": "rs"
@@ -40,6 +45,24 @@
     },
     "de.bmw.infotainment.drivingexcitement.XView": {
       "statusSteeringAngleDriver": "rs"
+    },
+    "de.bmw.chassis.SteeringAngle": {
+      "_optional": "Driving steering notifications",
+      "ActualSteeringAngleDriver": "s",
+      "actualSteeringAngleDriverNoCRC": "s",
+      "SteeringAngleFrontAxleEffective": "s"
+    },
+    "de.bmw.chassis.VehicleStabilizationManagement": {
+      "_optional": "Driving brake status notifications",
+      "StabilizationManagement": "s"
+    },
+    "de.bmw.powertrain.Powertrain": {
+      "_optional": "Driving wheel speed notifications",
+      "ActualValueRPMWheel": "s"
+    },
+    "de.bmw.powertrain.AcceleratorPedal": {
+      "_optional": "Driving accelerator notifications",
+      "AngleAcceleratorPedal": "s"
     },
     "de.bmw.infotainment.vehicle.TPMS": {
       "statusTyrePressure": "rs",
@@ -76,7 +99,7 @@
     },
     {
       "key": "section", "label": "Initial page", "type": "choice", "default": "driving",
-      "options": [["driving", "Driving"], ["temperatures", "Temperatures"], ["health", "Engine health"], ["bm3", "BM3 channels"]]
+      "options": [["driving", "Driving"], ["status", "Car Status"], ["bm3", "BM3 channels"]]
     },
     {
       "key": "bm3Engine", "label": "BM3 engine family (confirm exact family)", "type": "choice", "default": "unset",
@@ -103,7 +126,7 @@
       "default": "Reply-paced grouped reads; getter refresh setting does not apply. Hz measures completed cycles per DME, not display FPS. Stale values expire after 1.5 s. Vehicle speed/accuracy not yet measured."
     },
     {
-      "key": "bm3Status", "label": "BM3 acquisition details", "type": "text", "default": "Select an engine family, then open BM3 channels. Forced termination can leave temporary DIDs occupied until ECU diagnostic state resets."
+      "key": "bm3Status", "label": "BM3 acquisition details", "type": "text", "default": "Select an engine family for the BM3 channels and Car Status timing correction."
     },
     {
       "key": "refreshMs", "label": "Getter refresh", "type": "number", "unit": "ms", "default": 100,
@@ -122,15 +145,14 @@
       "steps": [60, 180, 600]
     },
     {
-      "key": "categoryOrder", "label": "Category order", "type": "choice", "default": "driving,temperatures,health,bm3",
+      "key": "categoryOrder", "label": "Category order", "type": "choice", "default": "driving,status,bm3",
       "options": [
-        ["driving,temperatures,health,bm3", "Driving / Temperatures / Engine health / BM3"],
-        ["driving,health,temperatures,bm3", "Driving / Engine health / Temperatures / BM3"],
-        ["temperatures,driving,health,bm3", "Temperatures / Driving / Engine health / BM3"],
-        ["temperatures,health,driving,bm3", "Temperatures / Engine health / Driving / BM3"],
-        ["health,driving,temperatures,bm3", "Engine health / Driving / Temperatures / BM3"],
-        ["health,temperatures,driving,bm3", "Engine health / Temperatures / Driving / BM3"],
-        ["bm3,driving,temperatures,health", "BM3 / Driving / Temperatures / Engine health"]
+        ["driving,status,bm3", "Driving / Car Status / BM3"],
+        ["driving,bm3,status", "Driving / BM3 / Car Status"],
+        ["status,driving,bm3", "Car Status / Driving / BM3"],
+        ["status,bm3,driving", "Car Status / BM3 / Driving"],
+        ["bm3,driving,status", "BM3 / Driving / Car Status"],
+        ["bm3,status,driving", "BM3 / Car Status / Driving"]
       ]
     },
     {
@@ -147,11 +169,11 @@
     },
     {
       "key": "pedalNote", "label": "Pedals", "type": "text",
-      "default": "100 ms target on Driving; ECU latency and shared queue limit replies"
+      "default": "Live accelerator and brake notifications; diagnostic fallback targets 100 ms"
     },
     {
       "key": "brakeNote", "label": "Brake", "type": "text",
-      "default": "Pressure, not pedal percent; parking brake from Vehicle2"
+      "default": "Driver braking status (raw); brake system pressure shown when status is unavailable"
     },
     {
       "key": "kickdownNote", "label": "Kickdown", "type": "text",
