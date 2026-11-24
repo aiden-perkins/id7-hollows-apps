@@ -8,411 +8,582 @@ const V = require('./view');
 const Dashboard = require('./dashboard');
 const Demo = require('./demo');
 
-mgu.run({
-    async start(ctx) {
-        const ui = ctx.ui, storage = new Storage(ctx.dataDir);
-        let dirty = true, loop = null, closed = false, lastDraw = 0, busy = false, pendingSession = null;
-        const changed = (event) => {
-            if (event && /^automatic-/.test(event.type)) pendingSession = event;
-            dirty = true; if (loop) loop.kick();
-        };
-        const sources = new Sources(ctx, changed, Diag), recorder = new Recorder(storage, sources, changed);
-        Object.assign(ctx.settings.values, recorder.settings);
-        let demo = ctx.settings.get('demo') === 'on' ? new Demo(recorder.settings) : null;
-        const state = {
-            page: ctx.settings.get('section') || 'trip', saved: null, focus: 0, focusMemory: {}, modal: null, draft: null,
-            history: [], historyPage: 0, historySelection: null, records: [], recordsPage: 0, followAutomatic: true, tablePages: { fuel: 0 }, tableCoverage: { fuel: false, gears: false }, projection: null, projectionId: null,
-            graphLoading: false, loadingId: null, graphRequest: 0, notice: '', noticeUntil: 0, usageBytes: null,
-            graph: { metric: 'speed', axis: 'time', zoomSeconds: 0, cursorAt: null },
-        };
-        const pages = ['trip', 'elevation', 'fuel', 'gears', 'history', 'records'];
-        const selectedTrip = () => state.saved || (demo ? demo.trip : recorder.active);
-        const focusKey = () => ['history', 'records', 'edit'].includes(state.page) ? state.page :
-            state.page + ':' + (state.saved ? state.saved.id : 'current');
-        const tell = (message) => { state.notice = message; state.noticeUntil = Date.now() + 7000; changed(); };
-        const action = (id, label, run, enabled, description) => ({ id, label, run, enabled: enabled !== false, description: description || '' });
-        function route(page, saved = state.saved) {
-            state.focusMemory[focusKey()] = state.focus;
-            if (page !== 'history') state.historySelection = null;
-            state.page = page; state.saved = saved;
-            state.focus = state.focusMemory[focusKey()] || 0;
-            changed();
-        }
-        async function refreshHistory() {
-            if (demo) { state.history = [demo.saved]; state.records = V.records(state.history); changed(); return; }
-            recorder.history = storage.history();
-            state.history = recorder.history.filter((s) => !recorder.active || recorder.active.id !== s.id);
-            if (state.historySelection) {
-                state.historySelection = new Set(state.history.filter((s) => bulkDeletable(s) && state.historySelection.has(s.id)).map((s) => s.id));
-            }
-            state.historyPage = Math.min(state.historyPage, Math.max(0, Math.ceil(state.history.length / 4) - 1));
-            state.records = V.records(state.history);
-            recorder.interrupted = recorder.history.filter((s) => s.status !== 'finished' && (!recorder.active || s.id !== recorder.active.id));
-            state.usageBytes = storage.usage();
-            changed();
-        }
-        function resetProjection() {
-            ++state.graphRequest; state.projection = null; state.projectionId = null; state.graphLoading = false; state.loadingId = null;
-            state.graph.cursorAt = null; state.tablePages = { fuel: 0 }; state.tableCoverage = { fuel: false, gears: false };
-        }
-        async function loadProjection() {
-            const trip = selectedTrip();
-            if (trip && trip.demo) {
-                state.projection = trip.id === demo.trip.id ? demo.projection : demo.savedProjection;
-                state.projectionId = trip.id; state.graphLoading = false; changed(); return;
-            }
-            if (!trip || state.projectionId === trip.id && state.projection || state.graphLoading && state.loadingId === trip.id) return;
-            const request = ++state.graphRequest, id = trip.id;
-            state.graphLoading = true; state.loadingId = id; state.projection = null; changed();
+const PAGES = ['trip', 'elevation', 'fuel', 'gears', 'history', 'records'];
+const TABS = ['Trip', 'Elevation', 'Fuel', 'Gears', 'History', 'Records'];
+const DATA_PAGES = PAGES.slice(0, 4);
+const HISTORY_ROWS = 4, RECORDS_ROWS = 4, BAND_ROWS = 8, NATIVE_ROWS = 10;
+const PREF_ROWS = ['PREF_AUTO', 'PREF_SMOOTH', 'PREF_SECTION', 'PREF_DEMO', 'PREF_RETRY', 'PREF_STORAGE', 'PREF_NOTICE'];
+const action = (id, label, run, options) => Object.assign({ id, label, run }, options);
+const pageCount = (items, size) => Math.max(1, Math.ceil(items.length / size));
+
+function background(ctx) {
+    const storage = new Storage(ctx.dataDir);
+    const model = { storage, projection: null, onChange: null, closed: false };
+    let graphGap = false;
+    function changed(event) {
+        if (model.closed) return;
+        if (event && event.type === 'start') {
+            graphGap = false;
+            model.projection = new V.Projection();
+        } else if (event && event.type === 'sample' && model.projection) {
             try {
-                const pending = recorder.active && recorder.active.id === id ? recorder.buffer.slice() : [];
-                const projection = await V.load(storage, id, pending);
-                if (closed || request !== state.graphRequest || !selectedTrip() || selectedTrip().id !== id) return;
-                state.projection = projection; state.projectionId = id;
-            } finally {
-                if (request === state.graphRequest) { state.graphLoading = false; state.loadingId = null; changed(); }
+                model.projection.add(graphGap ? Object.assign({}, event.row, { gapBefore: true }) : event.row);
+                graphGap = false;
+            } catch (error) {
+                if (!graphGap) ctx.log.warn(error);
+                graphGap = true;
+            }
+        } else if (event && event.type === 'finish') {
+            event.projection = model.projection;
+            model.projection = null;
+        }
+        if (model.onChange) model.onChange(event);
+    }
+    const sources = new Sources(ctx, changed, Diag);
+    const recorder = new Recorder(storage, sources, changed, ctx.log);
+    Object.assign(model, { sources, recorder });
+    recorder.setVehicleEnabled(!ctx.preview && ctx.settings.get('demo') !== 'on');
+
+    function close() {
+        if (model.closed) return;
+        model.closed = true;
+        try { recorder.close(); } catch (error) { ctx.log.warn(error); }
+        if (model.onChange) model.onChange({ type: 'closed' });
+    }
+    if (ctx.app && ctx.app.on) ctx.app.on('shutdown', close);
+    process.once('exit', close);
+    if (!ctx.preview) {
+        const terminate = () => { close(); process.exit(0); };
+        process.once('SIGTERM', terminate);
+        process.once('SIGINT', terminate);
+    }
+    return model;
+}
+
+mgu.run({
+    background,
+    start(ctx) {
+        const { ui, log } = ctx;
+        const model = ctx.background || background(ctx);
+        const { storage, sources, recorder } = model;
+        const initial = ctx.settings.get('section');
+        const state = {
+            page: PAGES.includes(initial) ? initial : 'trip', saved: null, backPage: null, detail: null,
+            history: [], records: [], historyPage: 0, recordsPage: 0, selection: null,
+            fuelPage: 0, coverage: { fuel: false, gears: false }, modal: null, draft: null,
+            notice: '', noticeUntil: 0, revision: 0,
+        };
+        let loop, demo = null, dirty = true, historyDirty = true;
+        let lastDraw = -Infinity, lastRecord = -Infinity, fallbackRecord = null, liveError = '';
+        let nativeOpen = false, nativePage = false, nativeItems = [], nativeRender = 0;
+        let storageUsage = 'Unavailable';
+
+        function tell(message) {
+            state.notice = message;
+            state.noticeUntil = mono() + 5500;
+            dirty = true;
+        }
+        function report(error) {
+            log.warn(error);
+            tell(error.message || String(error));
+        }
+        function invalidate() {
+            state.revision++;
+            dirty = true;
+        }
+        function route(page, saved = state.saved) {
+            if ((saved && saved.id) !== (state.saved && state.saved.id)) {
+                state.detail = null;
+                state.fuelPage = 0;
+                state.coverage = { fuel: false, gears: false };
+            }
+            if (page !== 'history') state.selection = null;
+            state.page = page;
+            state.saved = saved;
+            if (!saved) state.backPage = null;
+            invalidate();
+        }
+        function markHistoryDirty() {
+            historyDirty = true;
+            dirty = true;
+            if (nativeOpen && nativePage) {
+                setImmediate(() => {
+                    if (nativeOpen && !model.closed && !state.modal) renderNativeMenu().catch(report);
+                });
             }
         }
-        async function openPage(page) {
-            if (state.saved && [page, state.page].some((p) => p === 'history' || p === 'records')) {
-                resetProjection(); state.followAutomatic = true; route(page, null);
-            } else route(page);
-            if (page === 'history' || page === 'records') await refreshHistory();
-            if (['trip', 'elevation', 'fuel', 'gears'].includes(page)) await loadProjection();
+        function refreshHistory() {
+            if (!historyDirty) return;
+            historyDirty = false;
+            state.history = demo ? [demo.saved] : recorder.history();
+            state.records = V.records(state.history.filter((trip) => !recorder.pending.has(trip.id)));
+            state.historyPage = Math.min(state.historyPage, pageCount(state.history, HISTORY_ROWS) - 1);
+            state.recordsPage = Math.min(state.recordsPage, pageCount(state.records, RECORDS_ROWS) - 1);
+            if (state.selection) {
+                state.selection = new Set(state.history.filter((trip) => bulkDeletable(trip) && state.selection.has(trip.id)).map((trip) => trip.id));
+            }
+            invalidate();
         }
-        async function showCurrent() {
-            if (state.saved) resetProjection();
-            state.followAutomatic = true; route('trip', null); await loadProjection();
+        function openPage(page) {
+            const list = page === 'history' || page === 'records';
+            const current = page === 'trip' && state.page === 'trip';
+            route(page, list || current ? null : state.saved);
+            if (list) {
+                historyDirty = true;
+                refreshHistory();
+            }
         }
-        async function showSaved(trip) {
-            if (!state.saved || state.saved.id !== trip.id) resetProjection();
-            state.followAutomatic = false; route('trip', trip); await loadProjection();
+        function openSaved(trip, backPage, projection, page = 'trip') {
+            route(page, trip);
+            state.backPage = backPage;
+            if (trip.demo || projection) {
+                state.detail = { projection: trip.demo ? demo.savedProjection : projection };
+                return;
+            }
+            if (state.detail) return;
+            const detail = { loading: true };
+            state.detail = detail;
+            const cancelled = () => model.closed || state.detail !== detail;
+            V.load(storage, trip, recorder.pendingSamples(trip.id), cancelled).then((result) => {
+                if (!cancelled()) Object.assign(detail, result);
+            }).catch((error) => {
+                if (!cancelled()) {
+                    log.warn(error);
+                    detail.error = true;
+                }
+            }).then(() => {
+                if (!cancelled()) {
+                    detail.loading = false;
+                    dirty = true;
+                }
+            });
         }
-        async function settings() {
-            if (busy) return;
-            if (state.modal || state.page === 'edit') { tell('Close this dialog before opening Settings.'); return; }
-            state.usageBytes = storage.usage();
-            refreshSettings(); await ui.open('SETTINGS');
+
+        model.onChange = (event) => {
+            dirty = true;
+            if (!event) return;
+            if (event.type === 'closed') {
+                if (loop) loop.stop();
+            } else if (event.type === 'start') {
+                if (DATA_PAGES.includes(state.page) && !state.backPage && !state.modal) route(state.page, null);
+                state.noticeUntil = 0;
+            } else if (event.type === 'finish') {
+                markHistoryDirty();
+                if (DATA_PAGES.includes(state.page) && !state.saved && !state.modal)
+                    openSaved(event.trip, null, event.projection, state.page);
+                tell(recorder.pending.has(event.trip.id) ? 'Trip ended. Save pending.' : 'Trip saved');
+            } else if (event.type === 'stored') {
+                markHistoryDirty();
+            }
+        };
+
+        function recordAction() {
+            const activeId = recorder.active && recorder.active.id;
+            const label = activeId ? 'End trip' : demo ? 'Start real trip' : 'Start trip';
+            return action('record-trip', label, () => {
+                const now = mono();
+                if (activeId !== (recorder.active && recorder.active.id) || now - lastRecord < 350) return;
+                lastRecord = now;
+                if (activeId) recorder.finish();
+                else {
+                    if (demo) chooseDemo(false);
+                    recorder.start();
+                    route('trip', null);
+                }
+            }, { tone: activeId ? 'end' : 'start', width: 230 });
         }
-        async function exclusive(fn) {
-            if (busy) { tell('An operation is already in progress.'); return; }
-            busy = true; changed();
-            try { await fn(); } finally { busy = false; changed(); }
+        async function activate(item, revision = state.revision) {
+            if (model.closed || !item || item.disabled || revision !== state.revision) return;
+            try { await item.run(); } catch (error) { report(error); }
+            dirty = true;
         }
-        async function start() {
-            recorder.start(); state.followAutomatic = true;
-            resetProjection(); route('trip', null); await loadProjection(); tell('Recording started');
+        function closeModal() {
+            if (!state.modal) return;
+            state.modal = null;
+            invalidate();
         }
-        async function finish() {
-            const trip = recorder.finish('manual');
-            resetProjection(); await refreshHistory();
-            state.focusMemory.history = Math.max(0, state.history.findIndex((s) => s.id === trip.id));
-            await showSaved(trip); tell('Trip saved');
-        }
-        async function recover() {
-            const id = state.saved && state.saved.id; if (!id) return;
-            await recorder.recover(id); state.followAutomatic = true;
-            resetProjection(); route('trip', null); await loadProjection();
-            tell('Trip recovered. The missing interval remains a gap.');
-        }
-        async function closeInterrupted() {
-            if (!state.saved) return;
-            const trip = await recorder.closeInterrupted(state.saved.id);
-            resetProjection(); await refreshHistory(); await showSaved(trip);
-            tell('Closed at the last saved sample.');
-        }
-        function confirmDelete() {
-            const target = state.saved;
-            if (!target || target.status !== 'finished') return;
-            state.notice = ''; state.noticeUntil = 0;
-            state.modal = { title: 'Delete saved trip?', message: target.name,
-                detail: 'Its recording and annotation will be permanently deleted.', focus: 0,
-                actions: [action('cancel', 'Cancel', () => { state.modal = null; changed(); }),
-                    action('delete', 'Delete trip', () => exclusive(async () => {
-                        if (recorder.active && recorder.active.id === target.id) throw new Error('Cannot delete the active trip');
-                        storage.delete(target.id); state.modal = null; resetProjection();
-                        state.followAutomatic = true; route('history', null);
-                        await refreshHistory(); tell('Saved trip deleted');
-                    }))] };
-            changed();
-        }
-        async function toggleFavorite() {
-            const trip = state.saved;
-            if (!trip || trip.demo || recorder.active && recorder.active.id === trip.id) return;
-            state.saved = storage.setFavorite(trip.id, !trip.favorite);
-            await refreshHistory();
-            tell(state.saved.favorite ? 'Trip added to favorites' : 'Trip removed from favorites');
-        }
-        function confirmBulkDelete(trips, selected) {
+        function confirmDelete(trips, bulk, title) {
             if (!trips.length) return;
             const ids = trips.map((trip) => trip.id);
-            state.notice = ''; state.noticeUntil = 0;
             state.modal = {
-                title: selected ? 'Delete selected trips?' : 'Delete all unfavorited trips?',
-                message: ids.length + (ids.length === 1 ? ' trip will be permanently deleted.' : ' trips will be permanently deleted.'),
-                detail: 'Favorites and in-progress recordings are protected.', focus: 0,
-                actions: [action('cancel', 'Cancel', () => { state.modal = null; changed(); }),
-                    action('deleteMany', 'Delete trips', () => exclusive(async () => {
-                        const eligibleIds = ids.filter((id) => !recorder.active || recorder.active.id !== id);
-                        const result = storage.deleteMany(eligibleIds);
-                        result.failures.forEach((error) => ctx.log.warn(error));
-                        state.modal = null; state.historySelection = null;
-                        await refreshHistory(); state.focus = state.historyPage * 4;
-                        const skipped = ids.length - result.deleted;
+                title,
+                message: bulk ? ids.length + (ids.length === 1 ? ' trip will be deleted.' : ' trips will be deleted.') : V.tripTitle(trips[0]),
+                detail: bulk ? 'Favorited trips are kept.' : 'The trip and its saved samples will be deleted.',
+                actions: [
+                    action('cancel-delete', 'Cancel', closeModal),
+                    action('confirm-delete', 'Delete', () => {
+                        const result = recorder.deleteTrips(ids, bulk);
+                        result.failures.forEach((error) => log.warn(error));
+                        if (!result.deleted) {
+                            tell(result.failures[0] ? result.failures[0].message : 'Could not delete the trip');
+                            return;
+                        }
+                        closeModal();
+                        state.selection = null;
+                        if (!bulk) route('history', null);
+                        markHistoryDirty();
+                        refreshHistory();
                         tell('Deleted ' + result.deleted + (result.deleted === 1 ? ' trip' : ' trips') +
-                            (skipped ? '. ' + skipped + ' could not be deleted.' : '.'));
-                    }))],
+                            (result.failures.length ? '. ' + result.failures.length + ' could not be deleted.' : '.'));
+                    }, { tone: 'end' }),
+                ],
             };
-            changed();
-        }
-        function historyActions() {
-            const selection = state.historySelection;
-            const rows = state.history.map((trip) => {
-                if (!selection) return action(trip.id, trip.name, () => showSaved(trip));
-                return action('select:' + trip.id, trip.name, () => {
-                    if (selection.has(trip.id)) selection.delete(trip.id); else selection.add(trip.id);
-                }, bulkDeletable(trip), 'This trip is protected from bulk deletion.');
-            });
-            if (demo || !state.history.length) return rows;
-            const eligible = state.history.filter(bulkDeletable);
-            if (selection) {
-                const selected = eligible.filter((trip) => selection.has(trip.id));
-                return rows.concat([
-                    action('cancelSelection', 'Cancel selection', () => { state.historySelection = null; state.focus = state.historyPage * 4; }),
-                    action('deleteSelected', 'Delete selected (' + selected.length + ')', () => confirmBulkDelete(selected, true), selected.length > 0, 'Select one or more trips.'),
-                ]);
-            }
-            if (!eligible.length) return rows;
-            return rows.concat([
-                action('selectTrips', 'Select trips', () => { state.historySelection = new Set(); state.focus = state.historyPage * 4; }),
-                action('deleteUnfavorited', 'Delete unfavorited', () => confirmBulkDelete(eligible, false)),
-            ]);
+            state.noticeUntil = 0;
+            invalidate();
         }
         function edit() {
             const trip = state.saved;
-            if (!trip || trip.status !== 'finished') return;
-            state.draft = { name: trip.name, annotation: trip.annotation || '', field: 'name', caret: trip.name.length, lower: false };
-            route('edit'); state.focus = 0;
+            state.draft = { id: trip.id, name: trip.name, annotation: trip.annotation || '', field: 'name', caret: trip.name.length, lower: false };
+            route('edit');
         }
-        function keyboard() {
-            const d = state.draft; if (!d) return [];
+        function finishEdit() {
+            state.draft = null;
+            route('trip');
+        }
+        function editor() {
+            const d = state.draft, limit = d.field === 'name' ? 48 : 160;
             const insert = (character) => {
-                const limit = d.field === 'name' ? 48 : 160, value = d[d.field];
-                if (value.length >= limit) { tell('Character limit reached.'); return; }
-                d[d.field] = value.slice(0, d.caret) + character + value.slice(d.caret); d.caret += character.length; changed();
+                const value = d[d.field];
+                if (value.length >= limit) { tell('Character limit reached'); return; }
+                d[d.field] = value.slice(0, d.caret) + character + value.slice(d.caret);
+                d.caret++;
             };
-            const letters = (d.lower ? 'abcdefghijklmnopqrstuvwxyz' : 'ABCDEFGHIJKLMNOPQRSTUVWXYZ') + '0123456789';
-            const keys = letters.split('').map((character) => action('key_' + character, character, () => insert(character)));
-            [' ', '-', '.', ',', '/', ':', '_'].forEach((character) => keys.push(action('key_' + character, character === ' ' ? 'Space' : character, () => insert(character))));
-            keys.push(action('left', '<', () => { d.caret = Math.max(0, d.caret - 1); changed(); }));
-            keys.push(action('right', '>', () => { d.caret = Math.min(d[d.field].length, d.caret + 1); changed(); }));
-            keys.push(action('erase', 'Erase', () => {
-                if (d.caret > 0) { const value = d[d.field]; d[d.field] = value.slice(0, d.caret - 1) + value.slice(d.caret); d.caret--; changed(); }
-            }));
-            keys.push(action('case', 'Case', () => { d.lower = !d.lower; changed(); }));
-            keys.push(action('field', 'Name / Note', () => { d.field = d.field === 'name' ? 'annotation' : 'name'; d.caret = d[d.field].length; changed(); }));
-            keys.push(action('save', 'Save', () => exclusive(async () => {
-                state.saved = storage.edit(state.saved.id, d.name.trim(), d.annotation.trim());
-                state.history = state.history.map((s) => s.id === state.saved.id ? state.saved : s);
-                state.draft = null; route('trip'); tell('Trip details saved');
-            })));
-            keys.push(action('cancel', 'Cancel', () => { state.draft = null; route('trip'); }));
-            return keys;
+            const keys = (d.lower ? 'abcdefghijklmnopqrstuvwxyz' : 'ABCDEFGHIJKLMNOPQRSTUVWXYZ') + '0123456789 -,./:_';
+            return {
+                title: d.field === 'name' ? 'Trip name' : 'Trip note',
+                tools: [
+                    action('field', d.field === 'name' ? 'Edit note' : 'Edit name', () => {
+                        d.field = d.field === 'name' ? 'annotation' : 'name';
+                        d.caret = d[d.field].length;
+                        invalidate();
+                    }, { width: 142 }),
+                    action('case', d.lower ? 'ABC' : 'abc', () => { d.lower = !d.lower; invalidate(); }, { width: 94 }),
+                    action('caret-left', '<', () => { d.caret = Math.max(0, d.caret - 1); }, { width: 66 }),
+                    action('caret-right', '>', () => { d.caret = Math.min(d[d.field].length, d.caret + 1); }, { width: 66 }),
+                    action('erase', 'Erase', () => {
+                        if (d.caret > 0) {
+                            d[d.field] = d[d.field].slice(0, d.caret - 1) + d[d.field].slice(d.caret);
+                            d.caret--;
+                        }
+                    }, { width: 109 }),
+                    action('clear', 'Clear', () => { d[d.field] = ''; d.caret = 0; }, { width: 109 }),
+                    action('cancel-edit', 'Cancel', finishEdit, { width: 112 }),
+                    action('save-edit', 'Save', () => {
+                        state.saved = recorder.edit(d.id, d.name, d.annotation);
+                        finishEdit();
+                        markHistoryDirty();
+                        tell('Trip details saved');
+                    }, { width: 110, tone: 'start' }),
+                ],
+                keys: keys.split('').map((character) => action('key:' + character, character === ' ' ? 'Space' : character, () => insert(character))),
+            };
         }
-        function tablePage(delta) {
-            const trip = selectedTrip(), bands = trip ? trip.policy.speedBands : recorder.settings.speedBands;
-            const count = Math.ceil((bands.length + 2) / 8);
-            state.tablePages.fuel = ((state.tablePages.fuel || 0) + delta + count) % count;
-            changed();
-        }
-        function pageActions() {
-            const saved = state.saved, active = recorder.active;
-            if (state.page === 'history') return historyActions();
-            if (state.page === 'records') return state.records.map((record) => action(record.id, record.label,
-                () => showSaved(record.trip), !!record.trip, record.detail));
-            if (state.page === 'trip') {
-                if (!saved) {
-                    const recording = active && active.status === 'recording';
-                    return [action(recording ? 'finish' : 'start', recording ? 'Finish trip' : 'Start trip',
-                        () => exclusive(recording ? finish : start), !demo, 'Turn off Demo data in Settings to record a trip.')];
-                }
-                if (saved.demo) return [];
-                const favorite = action('favorite', saved.favorite ? 'Remove favorite' : 'Favorite trip', () => exclusive(toggleFavorite));
-                if (saved.status === 'finished') return [
-                    favorite,
-                    action('edit', 'Rename / annotate', edit),
-                    action('delete', 'Delete saved trip', confirmDelete),
-                ];
-                return [
-                    favorite,
-                    action('recover', 'Recover recording', () => exclusive(recover), [2, 3, 4].includes(saved.policy.calculationVersion) && !active,
-                        active ? 'Finish the active trip first.' : 'This recording can be closed at the last saved sample.'),
-                    action('close', 'Close interrupted trip', () => exclusive(closeInterrupted), !active, 'Finish the active trip first.'),
-                ];
-            }
-            if (state.page === 'elevation') return [];
-            const columns = () => action('columns', state.tableCoverage[state.page] ? 'Columns: Coverage' : 'Columns: Totals', () => {
-                state.tableCoverage[state.page] = !state.tableCoverage[state.page]; changed();
-            });
-            if (state.page === 'fuel') return [
-                action('previousRows', 'Slower bands', () => tablePage(-1)),
-                action('nextRows', 'Faster bands', () => tablePage(1)),
-                columns(),
+        function pageTools(current, total, set) {
+            if (total <= 1) return [];
+            return [
+                action('prev', 'Prev', () => { set(current - 1); invalidate(); }, { disabled: current === 0, width: 92 }),
+                action('next', 'Next', () => { set(current + 1); invalidate(); }, { disabled: current + 1 === total, width: 92 }),
             ];
-            if (state.page === 'gears') return [columns()];
-            if (state.page === 'edit') return keyboard();
-            return [];
         }
-        async function activate(index, id, page, tripId) {
-            if (busy || Date.now() - lastSelect < 160 || page !== (state.modal ? 'modal' : state.page)) return;
-            const trip = selectedTrip();
-            if (page === 'trip' && tripId !== (trip && trip.id)) return;
-            const list = state.modal ? state.modal.actions : pageActions();
-            const chosen = list[index]; if (!chosen || chosen.id !== id) return;
-            lastSelect = Date.now();
-            if (state.modal) state.modal.focus = index;
-            else state.focus = index;
-            if (!chosen.enabled) {
-                tell(chosen.description || 'This action is unavailable for the selected trip.');
-                return;
+        function historyView() {
+            const count = state.history.length, page = state.historyPage, total = pageCount(state.history, HISTORY_ROWS);
+            const selection = state.selection;
+            const tools = pageTools(page, total, (value) => { state.historyPage = value; });
+            const eligible = demo ? [] : state.history.filter(bulkDeletable);
+            if (selection) {
+                const selected = eligible.filter((trip) => selection.has(trip.id));
+                tools.push(action('cancel-select', 'Cancel', () => { state.selection = null; invalidate(); }, { width: 115 }));
+                tools.push(action('delete-selected', 'Delete (' + selected.length + ')',
+                    () => confirmDelete(selected, true, 'Delete selected trips?'), { width: 146, disabled: !selected.length }));
+            } else if (eligible.length) {
+                tools.push(action('select', 'Select', () => { state.selection = new Set(); invalidate(); }, { width: 108 }));
+                tools.push(action('delete-unfavorited', 'Delete unfavorited',
+                    () => confirmDelete(eligible, true, 'Delete unfavorited trips?'), { width: 230 }));
             }
-            try { await chosen.run(); }
-            catch (e) { tell(e.message); ctx.log.warn(e); }
-            changed();
+            const rows = state.history.slice(page * HISTORY_ROWS, (page + 1) * HISTORY_ROWS).map((trip) => ({
+                trip, checked: !!selection && selection.has(trip.id), status: V.tripStatus(trip, recorder.pending.has(trip.id)),
+                action: action('trip:' + trip.id, V.tripTitle(trip), () => {
+                    if (!selection) openSaved(trip, 'history');
+                    else {
+                        if (selection.has(trip.id)) selection.delete(trip.id);
+                        else selection.add(trip.id);
+                        invalidate();
+                    }
+                }, { disabled: !!selection && !bulkDeletable(trip) }),
+            }));
+            return {
+                title: selection ? selection.size + ' selected' : count + (count === 1 ? ' trip' : ' trips'),
+                subtitle: total > 1 ? 'Page ' + (page + 1) + ' of ' + total : '',
+                tools, rows, selection: !!selection,
+            };
         }
-        let lastSelect = -Infinity;
-        function changeHistoryPage(delta) {
-            const count = Math.max(1, Math.ceil(state.history.length / 4));
-            state.historyPage = Math.max(0, Math.min(count - 1, state.historyPage + delta));
-            state.focus = state.historyPage * 4; changed();
+        function recordsView() {
+            const page = state.recordsPage, total = pageCount(state.records, RECORDS_ROWS);
+            return {
+                title: 'Trip records',
+                subtitle: 'At least 95% coverage' + (total > 1 ? '  /  Page ' + (page + 1) + ' of ' + total : ''),
+                tools: pageTools(page, total, (value) => { state.recordsPage = value; }),
+                rows: state.records.slice(page * RECORDS_ROWS, (page + 1) * RECORDS_ROWS).map((record) => ({
+                    record, action: action('record:' + record.id, record.label, () => openSaved(record.trip, 'records'), { disabled: !record.trip }),
+                })),
+            };
         }
-        function changeRecordsPage(delta) {
-            const count = Math.max(1, Math.ceil(state.records.length / 2));
-            state.recordsPage = Math.max(0, Math.min(count - 1, state.recordsPage + delta));
-            state.focus = state.recordsPage * 2; changed();
+        const selectedTrip = () => state.saved ? Object.assign({}, state.saved, state.detail && state.detail.restored) :
+            demo ? demo.trip : recorder.active;
+        function pageView() {
+            if (state.page === 'history') return historyView();
+            if (state.page === 'records') return recordsView();
+            if (state.page === 'edit') return editor();
+            const saved = state.saved, tools = [];
+            const trip = selectedTrip();
+            const title = saved ? V.tripTitle(saved) : demo ? 'Demo trip' : recorder.active ? 'Recording trip' : 'Ready to record';
+            const started = trip && V.date(trip.startedAt);
+            const context = state.page === 'trip' ? '' : 'M850i / US';
+            let subtitle = [started, context].filter(Boolean).join('  /  ');
+            if (saved) {
+                subtitle = [V.tripStatus(saved, recorder.pending.has(saved.id)), title === started ? '' : started,
+                    context, saved.favorite ? 'Favorite' : '', saved.annotation].filter(Boolean).join('  /  ');
+                const back = state.backPage ? 'Back to ' + TABS[PAGES.indexOf(state.backPage)].toLowerCase() : 'History';
+                tools.push(action('back-to-list', back, () => openPage(state.backPage || 'history'), { width: state.backPage ? 180 : 120 }));
+                if (state.page === 'trip' && !saved.demo) {
+                    tools.push(action('favorite', saved.favorite ? 'Unfavorite' : 'Favorite', () => {
+                        state.saved = recorder.favorite(saved.id);
+                        markHistoryDirty();
+                        invalidate();
+                    }, { width: 150 }));
+                    tools.push(action('edit', 'Edit details', edit, { width: 154 }));
+                    tools.push(action('delete', 'Delete', () => confirmDelete([saved], false, 'Delete this trip?'), { width: 112 }));
+                }
+            }
+            const bands = trip && Array.isArray(trip.policy.speedBands) && trip.policy.speedBands.length ? trip.policy.speedBands : recorder.settings.speedBands;
+            if (state.page === 'fuel') {
+                const pages = Math.ceil((bands.length + 2) / BAND_ROWS);
+                state.fuelPage = Math.min(state.fuelPage, pages - 1);
+                tools.push(...pageTools(state.fuelPage, pages, (value) => { state.fuelPage = value; }));
+            }
+            if (state.page === 'fuel' || state.page === 'gears') {
+                const page = state.page;
+                tools.push(action('coverage', state.coverage[page] ? 'Show totals' : 'Show coverage', () => {
+                    state.coverage[page] = !state.coverage[page];
+                    invalidate();
+                }, { width: 185 }));
+            }
+            return { title, subtitle, tools, bands };
         }
-        const bind = (name, fn) => ui.onClick(name, async () => {
-            try { await fn(); } catch (e) { tell(e.message); ctx.log.warn(e); }
-            if (ui.isVisible('SETTINGS')) refreshSettings();
-            changed();
-        });
-        let fallbackRecord = null;
-        // Standard and software layouts use the native button when they cannot activate canvas controls.
-        if (ctx.hideButton) ctx.hideButton('BTN_RECORD');
-        bind('BTN_RECORD', () => {
-            if (busy || state.modal || state.page === 'edit' || ctx.display.own()) return;
-            if (fallbackRecord) return activate(0, fallbackRecord.id, 'trip', fallbackRecord.tripId);
-            return showCurrent();
-        });
-        bind('BTN_SETTINGS', settings);
+
         const labels = {};
-        function nativeText(name, value) { if (labels[name] !== value) { labels[name] = value; ui.text(name, value); } }
-        function refreshSettings() {
-            const p = recorder.settings;
-            const gps = sources.sample(mono()).gps;
-            const age = (ms) => Number.isFinite(ms) ? V.number(ms / 1000, 's') : 'unknown';
-            const gpsStatus = sources.mode === 'full' ? 'GPS ' + (gps.positionState || gps.state) +
-                ': fix age ' + age(gps.fixAgeMs) + ', receipt age ' + age(gps.ageMs) : 'GPS position/elevation collects while recording';
-            nativeText('PREF_AUTO', 'Automatic engine-session recording: ' + recorder.automaticStatus());
-            nativeText('PREF_SMOOTH', 'Display graph smoothing: ' + (p.smoothing ? 'on' : 'off'));
-            nativeText('PREF_BANDS', 'New trips: 0-10 mph, then 10 mph bands to 200 mph; 200+ and unknown remain separate. Saved trips retain their recorded bands.');
-            nativeText('PREF_STORAGE', 'Trip storage: ' + (state.usageBytes === null ? '--' : (state.usageBytes / 1048576).toFixed(3)) + ' MiB' +
-                (storage.usageIncomplete ? ' (partial scan)' : '') + '. All recordings are retained; nothing is automatically deleted.');
-            nativeText('PREF_DEMO', 'Demo data: ' + (demo ? 'on / memory only' : 'off'));
-            nativeText('PREF_NOTICE', recorder.error || state.notice || storage.errors.join(' | ') ||
-                (demo ? 'SIMULATED DATA. Demo trips are never recorded or added to real history.' :
-                    'New trips use vehicle-speed distance and CDS engine status. ' + gpsStatus +
-                    '. GPS reference/accuracy unverified. Engine sessions are not ignition; stop/start may split trips. App must be running. Fuel uses DME diagnostics and the calibrated CDS injection counter when supported.'));
+        function nativeText(name, value) {
+            if (labels[name] === value) return Promise.resolve();
+            labels[name] = value;
+            return Promise.resolve().then(() => ui.text(name, value)).catch((error) => {
+                if (labels[name] === value) delete labels[name];
+                log.warn(error);
+            });
         }
-        const setting = (name, key) => bind(name, () => {
-            recorder.configure(key, !recorder.settings[key]);
+        function nativeView() {
+            const notice = state.noticeUntil > mono() ? state.notice : '';
+            if (state.modal) return { title: state.modal.title + '\n' + (notice || state.modal.message), items: state.modal.actions };
+            if (!nativePage || !state.saved && !['history', 'records'].includes(state.page)) {
+                const items = PAGES.map((page, i) => action('view:' + page, TABS[i], () => {
+                    openPage(page);
+                    if (page === 'history' || page === 'records') nativePage = true;
+                    else return ui.close('SETTINGS');
+                }));
+                items.push(action('settings', 'Settings', () => showNative(false)));
+                if (state.saved && state.page === 'trip') items.unshift(action('manage-trip', 'Saved trip options', () => { nativePage = true; }));
+                if (state.page === 'fuel' || state.page === 'gears') items.unshift(...pageView().tools.filter((item) => item.id !== 'back-to-list'));
+                return { title: notice || 'Choose a page', items };
+            }
+            if (state.page === 'history' || state.page === 'records') refreshHistory();
+            const view = pageView(), items = [action('browse', 'All pages', () => { nativePage = false; })];
+            if (state.saved) {
+                items.push(action('show-trip', 'View trip', () => ui.close('SETTINGS')));
+                items.push(...view.tools.filter((item) => item.id !== 'edit'));
+            } else {
+                items.push(...view.tools);
+                view.rows.forEach((row) => {
+                    const label = row.trip ? (row.checked ? '[Selected] ' : '') + row.action.label +
+                        (row.trip.favorite ? ' [Favorite]' : '') + (row.status ? ' / ' + row.status : '') :
+                        row.action.label + (row.record.trip ? ' / ' + V.number(row.record.value, row.record.unit) : ' / Unavailable');
+                    items.push(Object.assign({}, row.action, { label }));
+                });
+            }
+            return { title: [view.title, notice || view.subtitle].filter(Boolean).join(' / '), items };
+        }
+        async function renderNativeMenu() {
+            const render = ++nativeRender, { title, items } = nativeView(), revision = state.revision;
+            nativeItems = [];
+            const updates = [nativeText('BROWSE_INFO', title)];
+            for (let i = 0; i < NATIVE_ROWS; i++) {
+                const name = 'BROWSE_' + i, item = items[i];
+                updates.push(ui.visible(name, !!item));
+                if (item) updates.push(nativeText(name, item.label), ui.enabled(name, !item.disabled));
+            }
+            await Promise.all(updates);
+            if (render === nativeRender) nativeItems = items.map((item) => ({ item, revision }));
+        }
+        async function showNative(browse) {
+            nativeOpen = browse;
+            nativePage = false;
+            const updates = PREF_ROWS.map((name) => ui.visible(name, !browse));
+            updates.push(ui.visible('BROWSE_INFO', browse), nativeText('SETTINGS_TITLE', browse ? 'Browse Trip Data' : 'Trip Data settings'));
+            if (browse) {
+                updates.push(renderNativeMenu());
+            } else {
+                nativeItems = [];
+                ++nativeRender;
+                for (let i = 0; i < NATIVE_ROWS; i++) updates.push(ui.visible('BROWSE_' + i, false));
+                try {
+                    storageUsage = (storage.usage() / 1048576).toFixed(3) + ' MiB' + (storage.usageIncomplete ? ' (partial)' : '');
+                } catch (error) {
+                    log.warn(error);
+                    storageUsage = 'Unavailable';
+                }
+                refreshSettings();
+            }
+            await Promise.all(updates);
+        }
+        function refreshSettings() {
+            const notice = state.noticeUntil > mono() ? state.notice : '';
+            const vehicle = sources.lifecycle(mono());
+            const provider = vehicle.driveState === null && !demo ? 'Waiting for drive-readiness data. Engine status is the auto-start fallback.' :
+                'Trips end when drive readiness ends.';
+            const status = recorder.settingsError || recorder.notice() || notice || recorder.historyError || storage.historyErrors[0] || storage.errors[0] || provider;
+            nativeText('PREF_AUTO', 'Auto-start trips  /  ' + recorder.automaticStatus());
+            nativeText('PREF_SMOOTH', 'Smooth graphs  /  ' + (recorder.settings.smoothing ? 'On' : 'Off'));
+            nativeText('PREF_DEMO', 'Demo data  /  ' + (demo ? 'On' : 'Off'));
+            nativeText('PREF_SECTION', 'Startup page  /  ' + (TABS[PAGES.indexOf(ctx.settings.get('section'))] || 'Trip'));
+            nativeText('PREF_STORAGE', 'Trip storage  /  ' + storageUsage);
+            nativeText('PREF_NOTICE', status);
+        }
+        function configure(key, value) {
+            recorder.configure(key, value);
             Object.assign(ctx.settings.values, recorder.settings);
+        }
+        function setDemo(on) {
+            if (on === !!demo) return true;
+            if (on && recorder.active) { tell('End the recording to open demo data'); return false; }
+            try { demo = on ? new Demo(recorder.settings) : null; }
+            catch (error) { report(error); return false; }
+            recorder.setVehicleEnabled(!demo && !ctx.preview);
+            state.historyPage = 0;
+            state.recordsPage = 0;
+            state.selection = null;
+            state.modal = null;
+            state.draft = null;
+            markHistoryDirty();
+            route('trip', null);
+            return true;
+        }
+        function chooseDemo(on) {
+            if (setDemo(on)) configure('demo', on ? 'on' : 'off');
+        }
+
+        const bind = (name, fn) => ui.onClick(name, async () => {
+            try { await fn(); } catch (error) { report(error); }
+        });
+        if (ctx.display.hideButton) ctx.display.hideButton('BTN_RECORD');
+        bind('BTN_RECORD', () => {
+            if (ctx.display.own() || state.modal || state.page === 'edit') return;
+            return activate(fallbackRecord || (!recorder.active ? recordAction() : null));
+        });
+        bind('BTN_SETTINGS', async () => {
+            if (state.modal || state.page === 'edit') return;
+            // The kit suppresses its canvas and controller capture while the native SETTINGS state is open.
+            await showNative(!ctx.display.own());
+            await ui.open('SETTINGS');
+        });
+        for (let i = 0; i < NATIVE_ROWS; i++) {
+            bind('BROWSE_' + i, async () => {
+                const selected = nativeItems[i];
+                if (!selected || !nativeOpen) return;
+                await activate(selected.item, selected.revision);
+                if (nativeOpen) await renderNativeMenu();
+            });
+        }
+        bind('PREF_AUTO', () => { configure('automatic', !recorder.settings.automatic); refreshSettings(); });
+        bind('PREF_SMOOTH', () => { configure('smoothing', !recorder.settings.smoothing); refreshSettings(); });
+        bind('PREF_RETRY', () => { recorder.retrySources(); tell('Reconnecting to vehicle data'); refreshSettings(); });
+        bind('PREF_SECTION', () => {
+            const index = PAGES.indexOf(ctx.settings.get('section'));
+            configure('section', PAGES[(index + 1) % PAGES.length]);
             refreshSettings();
         });
-        setting('PREF_AUTO', 'automatic'); setting('PREF_SMOOTH', 'smoothing');
-        bind('PREF_RETRY', () => { recorder.retrySources(); tell('Retrying vehicle providers'); refreshSettings(); });
-        bind('PREF_DEMO', () => {
-            if (busy || recorder.active) { tell('Finish the recording before changing demo mode.'); return; }
-            ctx.settings.set('demo', demo ? 'off' : 'on');
-        });
+        bind('PREF_DEMO', () => { chooseDemo(!demo); refreshSettings(); });
         ctx.settings.onChange((key) => {
-            if (key !== 'demo') return;
-            const enabled = ctx.settings.get('demo') === 'on';
-            if (enabled === !!demo) return;
-            if (busy || recorder.active) {
-                ctx.settings.set('demo', demo ? 'on' : 'off');
-                tell('Finish the recording before changing demo mode.'); return;
-            }
-            demo = enabled ? new Demo(recorder.settings) : null;
-            recorder.setAutomaticEnabled(!demo && !ctx.preview);
-            state.followAutomatic = true; state.modal = null; state.draft = null;
-            resetProjection(); route('trip', null);
-            Promise.resolve(refreshHistory()).then(loadProjection).catch((e) => tell(e.message));
-            refreshSettings(); changed();
+            if (key === 'demo') {
+                if (!setDemo(ctx.settings.get('demo') === 'on')) ctx.settings.values.demo = demo ? 'on' : 'off';
+                recorder.settings.demo = ctx.settings.get('demo');
+                if (ui.isVisible('SETTINGS') && !nativeOpen) refreshSettings();
+            } else if (key === 'section') recorder.settings.section = ctx.settings.get('section');
         });
         if (ctx.onTab) ctx.onTab((index) => {
-            const page = pages[index];
-            if (busy || state.modal || state.page === 'edit' || !page) return;
-            const open = page === 'trip' && state.page === 'trip' && state.saved ? showCurrent() : openPage(page);
-            open.catch((e) => tell(e.message));
+            if (!state.modal && state.page !== 'edit' && PAGES[index]) openPage(PAGES[index]);
         });
         ui.onVisible((name, visible) => {
-            if (name === 'SETTINGS' && visible) refreshSettings();
-            changed();
+            if (name === 'MAIN' && !visible && !nativeOpen) closeModal();
+            if (name === 'SETTINGS' && !visible) {
+                nativeOpen = false;
+                nativeItems = [];
+                ++nativeRender;
+                closeModal();
+            }
+            dirty = true;
         });
-        if (ui.onFocus) ui.onFocus(changed);
-        if (ctx.onLayout) ctx.onLayout(changed);
-        const close = () => {
-            if (closed) return;
-            closed = true; ++state.graphRequest;
-            if (loop) loop.stop();
-            recorder.close();
-        };
-        if (ctx.app && ctx.app.on) ctx.app.on('shutdown', close);
-        process.once('exit', close);
-        recorder.setAutomaticEnabled(!demo && !ctx.preview);
-        await refreshHistory();
-        await loadProjection();
-        loop = ctx.loop('MAIN', 30, async () => {
-            if (closed) return;
-            if (pendingSession && !busy && !state.modal && state.page !== 'edit') {
-                const event = pendingSession; pendingSession = null;
-                await refreshHistory();
-                if (state.followAutomatic) {
-                    state.saved = event.type === 'automatic-stop' ? event.trip : null;
-                    resetProjection(); await loadProjection();
-                }
-                tell(event.type === 'automatic-start' ? 'Engine running / recording started' : 'Engine stopped / trip saved');
+        if (ctx.onLayout) ctx.onLayout(() => {
+            if (!ctx.display.own() && !nativeOpen) {
+                if (state.page === 'edit') finishEdit();
+                closeModal();
             }
-            const now = Date.now();
-            if (demo) {
-                if (now - lastDraw < 1000 / 30) return;
-                demo.advance(now);
-            } else if (!dirty && now - lastDraw < 1000) return;
-            dirty = false; lastDraw = now;
-            const trip = selectedTrip();
-            if (trip && recorder.active && trip.id === recorder.active.id && state.projectionId === trip.id && state.projection) {
-                recorder.recent.forEach((row) => state.projection.add(row));
+            dirty = true;
+        });
+
+        function liveSnapshot(now) {
+            if (demo) return demo.live;
+            try {
+                const values = sources.sample(now, false);
+                liveError = '';
+                return values;
+            } catch (error) {
+                if (liveError !== error.message) log.warn(error);
+                liveError = error.message;
+                return {};
             }
-            const actions = pageActions();
-            state.focus = Math.max(0, Math.min(state.focus, Math.max(0, actions.length - 1)));
-            const errors = storage.errors.concat(storage.historyErrors || []);
-            const notice = recorder.error || (state.noticeUntil > now ? state.notice : '') || (errors.length ? errors[0] : '') ||
-                (state.page === 'trip' && !state.saved && recorder.interrupted.length && !demo ? 'Interrupted trips are waiting in History.' : '') ||
-                (demo ? 'SIMULATED DATA / not recorded' : '');
-            const vm = Object.assign({}, state, {
-                actions, trip, currentTrip: demo ? demo.trip : recorder.active, saved: !!state.saved, focus: state.focus, demo: !!demo,
-                tablePage: state.tablePages[state.page] || 0, tableCoverage: !!state.tableCoverage[state.page], smoothing: recorder.settings.smoothing,
-                live: demo ? demo.live : sources.sample(mono()), speedBands: recorder.settings.speedBands, notice, busy,
-                activate, historyPageSize: 4, changeHistoryPage, changeRecordsPage,
-                projection: trip && state.projectionId === trip.id ? state.projection : null,
-            });
-            const frame = Dashboard.draw(ctx, vm);
-            const record = !frame.own && state.page === 'trip' && !state.saved ? actions[0] : null;
-            fallbackRecord = record ? { id: record.id, tripId: trip && trip.id } : null;
-            if (!frame.own) nativeText('BTN_RECORD', record ? record.label : 'Trip');
+        }
+        Object.assign(ctx.settings.values, recorder.settings);
+        if (ctx.settings.get('demo') === 'on') {
+            setDemo(true);
+            route(PAGES.includes(initial) ? initial : 'trip', null);
+        }
+        recorder.setVehicleEnabled(!demo && !ctx.preview);
+        loop = ctx.loop('MAIN', 8, async () => {
+            if (model.closed) return;
+            const now = mono(), elapsed = now - lastDraw;
+            if (elapsed < (ctx.display.own() ? 100 : 200) || (!dirty && !demo && elapsed < 900)) return;
+            if (demo) demo.advance(Math.min(Date.now(), demo.at + 1000));
+            if (state.page === 'history' || state.page === 'records') refreshHistory();
+
+            dirty = false;
+            lastDraw = now;
+            const trip = selectedTrip(), saved = !!state.saved, detail = state.detail;
+            const revision = state.revision, controls = pageView();
+            const toast = state.noticeUntil > now ? state.notice : '';
+            const record = recordAction();
+            const frame = Dashboard.draw(ctx, Object.assign({}, controls, {
+                tabs: TABS, selectedTab: state.page === 'edit' ? 0 : PAGES.indexOf(state.page), page: state.page,
+                trip, saved, demo: !!demo, recording: !!recorder.active, modal: state.modal, draft: state.draft,
+                notice: toast || recorder.notice(), toast, record, activate: (item) => activate(item, revision), bandRows: BAND_ROWS,
+                tablePage: state.fuelPage, tableCoverage: state.coverage[state.page], smoothing: recorder.settings.smoothing,
+                live: !saved && state.page === 'trip' ? liveSnapshot(now) : null,
+                projection: saved ? detail && detail.projection : demo ? demo.projection : model.projection,
+                graphLoading: saved && detail && detail.loading, graphError: saved && detail && detail.error,
+                graphSkipped: saved && detail && detail.skipped,
+            }));
+            if (!frame.own) {
+                fallbackRecord = record;
+                nativeText('BTN_RECORD', record.label);
+            } else fallbackRecord = null;
             await ui.image('MAIN_GFX', frame);
         });
-        refreshSettings(); changed();
     },
 });

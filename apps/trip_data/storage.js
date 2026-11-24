@@ -7,41 +7,79 @@ const C = require('./calculations');
 const validId = (id) => typeof id === 'string' && /^trip-[a-z0-9]+-[a-f0-9]{12}$/.test(id);
 const bulkDeletable = (s) => !s.demo && s.status !== 'recording' && s.favorite !== true;
 const deletedDirectory = /^\.deleted-trip-[a-z0-9]+-[a-f0-9]{12}-[a-f0-9]{12}$/;
+const CHUNK_LIMIT = 1024 * 1024;
+const STALE_FINISH = 'recording interrupted';
 function token() { return crypto.randomBytes(6).toString('hex'); }
-function atomic(file, value) {
+function atomic(file, content) {
     const temporary = file + '.' + token() + '.tmp';
     const fd = fs.openSync(temporary, 'wx');
-    try { fs.writeFileSync(fd, JSON.stringify(value, null, 2) + '\n'); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
-    fs.renameSync(temporary, file);
+    try {
+        try {
+            fs.writeFileSync(fd, content);
+            fs.fsyncSync(fd);
+        } finally { fs.closeSync(fd); }
+        fs.renameSync(temporary, file);
+    } catch (error) {
+        try { fs.unlinkSync(temporary); } catch (cleanupError) { /* Keep the original write error. */ }
+        throw error;
+    }
 }
+const writeJson = (file, value) => atomic(file, JSON.stringify(value, null, 2) + '\n');
+const chunkSequence = (name) => Number(name.slice(8, 17));
+
+function ended(summary) {
+    if (summary.status === 'finished') return summary;
+    return Object.assign({}, summary, {
+        status: 'finished',
+        endedAt: summary.lastWallAt || summary.endedAt || summary.startedAt,
+        finishReason: STALE_FINISH,
+        interruptionReason: summary.interruptionReason || 'Recording ended before the final checkpoint',
+    });
+}
+
 class Storage {
     constructor(dir) {
-        this.dir = dir; this.trips = path.join(dir, 'trips'); this.errors = []; this.settingsBlocked = false; this.indexBlocked = false;
-        if (!fs.existsSync(this.trips)) fs.mkdirSync(this.trips);
-        if (!fs.lstatSync(this.trips).isDirectory() || fs.lstatSync(this.trips).isSymbolicLink()) throw new Error('Trip storage is not a regular directory');
-        const index = path.join(this.trips, 'index.json');
-        if (fs.existsSync(index)) {
-            try {
-                const data = JSON.parse(fs.readFileSync(index, 'utf8'));
-                if (![1, 2].includes(data.schemaVersion) || !Array.isArray(data.trips)) throw new Error('Unsupported index schema');
-            } catch (e) { this.indexBlocked = true; this.errors.push('Index preserved: ' + e.message); }
+        this.dir = dir;
+        this.trips = path.join(dir, 'trips');
+        this.errors = [];
+        this.historyErrors = [];
+        this.settingsBlocked = false;
+        this.indexBlocked = false;
+    }
+    warn(message) {
+        if (!this.errors.includes(message)) this.errors = this.errors.slice(-9).concat(message);
+    }
+    tripDirectory() {
+        if (!fs.lstatSync(this.trips).isDirectory()) throw new Error('Trip storage is not a regular directory');
+        return this.trips;
+    }
+    prepare(id) {
+        if (!validId(id)) throw new Error('Invalid trip ID');
+        for (const dir of [this.trips, path.join(this.trips, id)]) {
+            try { fs.mkdirSync(dir); } catch (error) { if (error.code !== 'EEXIST') throw error; }
+            if (!fs.lstatSync(dir).isDirectory()) throw new Error('Trip storage is not a regular directory');
         }
     }
     settings() {
         const defaults = { schemaVersion: 1, units: 'US', precision: 3, dateFormat: 'US12',
-            automatic: false, engineSessionHold: false, smoothing: true, speedBands: Array.from({ length: 20 }, (_, i) => 10 + i * 10) };
+            automatic: true, smoothing: true, speedBands: Array.from({ length: 20 }, (_, i) => 10 + i * 10) };
         try {
-            const s = JSON.parse(fs.readFileSync(path.join(this.dir, 'settings.json'), 'utf8'));
-            if (!s || s.schemaVersion !== 1 || s.units !== 'US' || s.precision !== 3 || s.dateFormat !== 'US12' ||
-                typeof s.automatic !== 'boolean' || s.smoothing !== undefined && typeof s.smoothing !== 'boolean' ||
-                s.engineSessionHold !== undefined && typeof s.engineSessionHold !== 'boolean' ||
+            const file = path.join(this.dir, 'settings.json'), info = fs.lstatSync(file);
+            if (!info.isFile() || info.size > CHUNK_LIMIT) throw new Error('Unsupported settings file');
+            const saved = JSON.parse(fs.readFileSync(file, 'utf8'));
+            if (!saved || typeof saved !== 'object' || Array.isArray(saved)) throw new Error('Unsupported settings file');
+            const s = Object.assign({}, defaults, saved);
+            if (s.schemaVersion !== 1 || s.units !== 'US' || s.precision !== 3 || s.dateFormat !== 'US12' ||
+                typeof s.automatic !== 'boolean' || typeof s.smoothing !== 'boolean' ||
                 !Array.isArray(s.speedBands) || (s.speedBands.length < 1 || s.speedBands.length > 64) ||
                 !s.speedBands.every((v, i) => Number.isFinite(v) && v > 1 && v <= 250 && (!i || v > s.speedBands[i - 1]))) throw new Error('Unsupported or invalid settings');
             // Apply the requested bands to future recordings; saved trip policies remain immutable.
-            return Object.assign(defaults, { automatic: s.automatic, engineSessionHold: s.engineSessionHold === true,
-                smoothing: s.smoothing !== false });
+            return Object.assign(defaults, { automatic: s.automatic, smoothing: s.smoothing });
         } catch (e) {
-            if (e.code !== 'ENOENT') { this.settingsBlocked = true; this.errors.push('Settings preserved: ' + e.message); }
+            if (e.code !== 'ENOENT') {
+                this.settingsBlocked = !e.code;
+                this.warn('Settings preserved: ' + e.message);
+            }
             return defaults;
         }
     }
@@ -50,18 +88,19 @@ class Storage {
         const file = path.join(this.dir, 'settings.json');
         let saved = {};
         try { saved = JSON.parse(fs.readFileSync(file, 'utf8')); } catch (e) { if (e.code !== 'ENOENT') throw e; }
-        atomic(file, Object.assign({}, saved, value));
+        writeJson(file, Object.assign({}, saved, value));
     }
     directory(id) {
         if (!validId(id)) throw new Error('Invalid trip ID');
-        const dir = path.join(this.trips, id), info = fs.lstatSync(dir);
-        if (!info.isDirectory() || info.isSymbolicLink()) throw new Error('Unsafe trip storage path');
+        const dir = path.join(this.tripDirectory(), id);
+        if (!fs.lstatSync(dir).isDirectory()) throw new Error('Unsafe trip storage path');
         return dir;
     }
     read(id) {
         const dir = this.directory(id);
         const file = path.join(dir, 'summary.json');
-        if (fs.statSync(file).size > 1024 * 1024) throw new Error('Trip summary exceeds supported size');
+        const info = fs.lstatSync(file);
+        if (!info.isFile() || info.size > CHUNK_LIMIT) throw new Error('Unsupported trip summary file');
         const s = JSON.parse(fs.readFileSync(file, 'utf8'));
         if (!s || ![1, 2].includes(s.schemaVersion) || s.id !== id || !s.policy || ![1, 2, 3, 4].includes(s.policy.calculationVersion) ||
             !s.stats || !Number.isFinite(s.stats.durationMs) || s.stats.durationMs < 0 ||
@@ -78,100 +117,117 @@ class Storage {
             !Array.isArray(s.policy.speedBands))) throw new Error('Invalid vehicle-speed calculation policy; preserved');
         return s;
     }
-    history() {
+    history(activeId) {
         const result = [], errors = [];
-        fs.readdirSync(this.trips).filter(validId).forEach((id) => {
-            try { result.push(this.read(id)); } catch (e) { errors.push(id + ': ' + e.message); }
-        });
+        let names;
+        try { names = fs.readdirSync(this.tripDirectory()); }
+        catch (error) { if (error.code !== 'ENOENT') throw error; names = []; }
+        for (const id of names) {
+            if (id === activeId || !validId(id)) continue;
+            try { result.push(ended(this.read(id))); }
+            catch (error) { if (error.code !== 'ENOENT') errors.push(id + ': ' + error.message); }
+        }
         this.historyErrors = errors;
         return result.sort((a, b) => b.startedAt - a.startedAt);
     }
-    index() {
+    index(summaries) {
         if (this.indexBlocked) return;
         try {
-            const trips = this.history().map((s) => ({ id: s.id, name: s.name, startedAt: s.startedAt, status: s.status, favorite: s.favorite === true }));
-            atomic(path.join(this.trips, 'index.json'), { schemaVersion: 2, trips });
-        } catch (e) { this.errors.push('Trip summaries saved; index update failed: ' + e.message); this.errors = this.errors.slice(-10); }
+            const file = path.join(this.tripDirectory(), 'index.json');
+            let previous;
+            try {
+                const info = fs.lstatSync(file);
+                if (!info.isFile() || info.size > CHUNK_LIMIT) throw new Error('Unsupported index file');
+                previous = fs.readFileSync(file, 'utf8');
+            } catch (error) {
+                if (error.code && error.code !== 'ENOENT') throw error;
+                if (!error.code) {
+                    this.indexBlocked = true;
+                    this.warn('Trip index preserved: ' + error.message);
+                    return;
+                }
+            }
+            if (previous !== undefined) {
+                try {
+                    const index = JSON.parse(previous);
+                    if (!index || ![1, 2].includes(index.schemaVersion) || !Array.isArray(index.trips)) throw new Error('Unsupported index schema');
+                } catch (error) {
+                    this.indexBlocked = true;
+                    this.warn('Trip index preserved: ' + error.message);
+                    return;
+                }
+            }
+            const trips = summaries.map((s) => ({ id: s.id, name: s.name, startedAt: s.startedAt, status: s.status, favorite: s.favorite === true }));
+            writeJson(file, { schemaVersion: 2, trips });
+        } catch (error) { this.warn('Trip index update failed: ' + error.message); }
     }
     create(settings) {
-        const id = 'trip-' + Date.now().toString(36) + '-' + token();
-        fs.mkdirSync(path.join(this.trips, id));
-        const summary = { schemaVersion: 2, id, name: 'Trip ' + new Date().toISOString(), annotation: '', favorite: false,
-            status: 'recording', startedAt: Date.now(), endedAt: null, updatedAt: Date.now(), sequence: 0,
+        const startedAt = Date.now(), id = 'trip-' + startedAt.toString(36) + '-' + token();
+        const summary = { schemaVersion: 2, id, name: 'Trip ' + new Date(startedAt).toISOString(), annotation: '', favorite: false,
+            status: 'recording', startedAt, endedAt: null, updatedAt: startedAt, sequence: 0,
             policy: C.policy(settings), gaps: [], missingWallMs: 0, lastWallAt: null, timelineMs: 0,
             sources: require('./sources').DEFINITIONS, sourceNotes: require('./sources').NOTES };
         summary.stats = C.create(summary.policy);
-        atomic(path.join(this.directory(id), 'summary.json'), summary); this.index();
         return summary;
     }
     save(summary) {
-        summary.updatedAt = Date.now();
-        atomic(path.join(this.directory(summary.id), 'summary.json'), summary);
+        const updatedAt = Date.now();
+        writeJson(path.join(this.directory(summary.id), 'summary.json'), Object.assign({}, summary, { updatedAt }));
+        summary.updatedAt = updatedAt;
     }
     chunk(id, sequence, rows) {
         const dir = this.directory(id), name = 'samples-' + String(sequence).padStart(9, '0') + '.jsonl';
         const file = path.join(dir, name);
         if (fs.existsSync(file)) throw new Error('Sample chunk already exists; original preserved');
         const content = rows.map((r) => JSON.stringify(r)).join('\n') + '\n';
-        if (Buffer.byteLength(content) > 1024 * 1024) throw new Error('Sample batch exceeds 1 MiB; recording interrupted');
-        const temp = file + '.' + token() + '.tmp', fd = fs.openSync(temp, 'wx');
-        try { fs.writeFileSync(fd, content); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
-        fs.renameSync(temp, file);
+        if (Buffer.byteLength(content) > CHUNK_LIMIT) throw new Error('Sample batch exceeds 1 MiB');
+        atomic(file, content);
     }
     chunkNames(id) {
         return fs.readdirSync(this.directory(id)).filter((n) => /^samples-[0-9]{9}\.jsonl$/.test(n)).sort();
     }
-    async samples(id, visit) {
-        const dir = this.directory(id), names = this.chunkNames(id);
-        let previous = null;
-        for (let i = 0; i < names.length; i++) {
-            const file = path.join(dir, names[i]);
-            if (!fs.lstatSync(file).isFile() || fs.lstatSync(file).isSymbolicLink() || fs.statSync(file).size > 1024 * 1024) throw new Error('Unsupported sample chunk; preserved');
-            const lines = fs.readFileSync(file, 'utf8').split('\n').filter((line) => line.length);
-            for (const line of lines) {
-                const row = JSON.parse(line);
-                if (![1, 2].includes(row.schemaVersion) || !Number.isFinite(row.recordedMs) || !Number.isFinite(row.elapsedMs) ||
-                    !Number.isFinite(row.wallAt) || typeof row.segment !== 'string' || !row.values ||
-                    !['gps', 'speed', 'rpm', 'gear', 'fuel'].every((k) => row.values[k] && typeof row.values[k].state === 'string') ||
-                    row.recordedMs < 0 || previous && row.recordedMs < previous.recordedMs) throw new Error('Invalid sample timeline; original preserved');
-                await visit(row); previous = row;
+    async samples(id, visit, names = this.chunkNames(id), cancelled = () => false) {
+        const dir = this.directory(id);
+        let last = null, skipped = 0, sequence = 0, gap = false;
+        for (const name of names) {
+            await new Promise((resolve) => setImmediate(resolve));
+            if (cancelled()) break;
+            const file = path.join(dir, name), next = chunkSequence(name);
+            if (next > sequence + 1) {
+                skipped += next - sequence - 1;
+                gap = true;
             }
-            if (i % 8 === 0) await new Promise((resolve) => setImmediate(resolve));
+            sequence = next;
+            let rows;
+            try {
+                const info = fs.lstatSync(file);
+                if (!info.isFile() || info.size > CHUNK_LIMIT) throw new Error('Unsupported sample chunk');
+                rows = fs.readFileSync(file, 'utf8').split('\n').filter(Boolean).map((line) => JSON.parse(line));
+                if (!rows.length) throw new Error('Empty sample chunk');
+                let previous = last;
+                for (const row of rows) {
+                    if (!row || ![1, 2].includes(row.schemaVersion) || !Number.isFinite(row.recordedMs) || !Number.isFinite(row.elapsedMs) ||
+                        !Number.isFinite(row.wallAt) || typeof row.segment !== 'string' || !row.values ||
+                        !['gps', 'speed', 'rpm', 'gear', 'fuel'].every((k) => row.values[k] && typeof row.values[k].state === 'string') ||
+                        row.recordedMs < 0 || previous && (row.recordedMs < previous.recordedMs || row.elapsedMs < previous.elapsedMs)) throw new Error('Invalid sample timeline');
+                    previous = row;
+                }
+            } catch (error) {
+                skipped++;
+                gap = true;
+                continue;
+            }
+            for (const row of rows) {
+                if (gap) row.gapBefore = true;
+                visit(row);
+                last = row;
+                gap = false;
+            }
         }
-    }
-    async recover(id) {
-        const summary = this.read(id);
-        if (summary.status === 'finished') throw new Error('Finished trips cannot be recovered');
-        const resumable = [2, 3, 4].includes(summary.policy.calculationVersion), stats = resumable ? C.create(summary.policy) : null;
-        let last = null;
-        await this.samples(id, (row) => { if (resumable) C.accept(stats, last, row, summary.policy); last = row; });
-        // Preserve version-1 totals; rebuild resumable trips with their own immutable policy.
-        if (resumable) summary.stats = stats;
-        summary.status = 'interrupted';
-        if (last) {
-            summary.lastWallAt = last.wallAt; summary.timelineMs = last.elapsedMs;
-            summary.missingWallMs = Math.max(0, last.elapsedMs - last.recordedMs);
-        }
-        const names = this.chunkNames(id);
-        summary.sequence = names.length ? Number(names[names.length - 1].slice(8, 17)) : 0;
-        return { summary, last, resumable };
-    }
-    edit(id, name, annotation) {
-        const summary = this.read(id);
-        if (summary.status === 'recording') throw new Error('Interrupt or finish recording before editing metadata');
-        if (!name.trim() || name.length > 48 || annotation.length > 160) throw new Error('Name or annotation is too long or empty');
-        summary.name = name.trim(); summary.annotation = annotation.trim(); this.save(summary); this.index();
-        return summary;
-    }
-    setFavorite(id, favorite) {
-        const summary = this.read(id);
-        summary.favorite = favorite === true;
-        this.save(summary); this.index();
-        return summary;
+        return skipped;
     }
     remove(id, protectFavorites) {
-        const summary = this.read(id);
-        if (summary.status === 'recording') throw new Error('Close or recover the interrupted recording before deletion');
+        const summary = ended(this.read(id));
         if (protectFavorites && !bulkDeletable(summary)) throw new Error('Trip is protected from bulk deletion');
         const dir = this.directory(id), names = fs.readdirSync(dir);
         names.forEach((name) => {
@@ -186,31 +242,23 @@ class Storage {
             names.forEach((name) => fs.unlinkSync(path.join(removed, name)));
             fs.rmdirSync(removed);
         } catch (e) {
-            this.errors.push('Trip removed from History. File cleanup incomplete: ' + e.message);
+            this.warn('Trip removed from History. File cleanup incomplete: ' + e.message);
         }
-    }
-    delete(id) { this.remove(id, false); this.index(); }
-    deleteMany(ids) {
-        let deleted = 0;
-        const failures = [];
-        for (const id of new Set(ids)) {
-            try { this.remove(id, true); deleted++; }
-            catch (e) { failures.push(id + ': ' + e.message); }
-        }
-        if (deleted) this.index();
-        return { deleted, failures };
     }
     usage() {
         let bytes = 0; this.usageIncomplete = false;
-        fs.readdirSync(this.trips).filter((id) => validId(id) || deletedDirectory.test(id)).forEach((id) => {
+        let names;
+        try { names = fs.readdirSync(this.tripDirectory()); }
+        catch (error) { if (error.code !== 'ENOENT') throw error; return 0; }
+        names.filter((id) => validId(id) || deletedDirectory.test(id)).forEach((id) => {
             try {
                 const dir = validId(id) ? this.directory(id) : path.join(this.trips, id);
                 if (!fs.lstatSync(dir).isDirectory()) throw new Error('Unsafe trip storage path');
                 fs.readdirSync(dir).forEach((n) => { const st = fs.lstatSync(path.join(dir, n)); if (st.isFile() && !st.isSymbolicLink()) bytes += st.size; });
-            } catch (e) { this.usageIncomplete = true; this.errors.push('Storage usage incomplete: ' + e.message); }
+            } catch (e) { this.usageIncomplete = true; this.warn('Storage usage incomplete: ' + e.message); }
         });
         this.errors = this.errors.slice(-10);
         return bytes;
     }
 }
-module.exports = { Storage, validId, bulkDeletable };
+module.exports = { Storage, validId, bulkDeletable, ended, STALE_FINISH, chunkSequence, CHUNK_LIMIT };

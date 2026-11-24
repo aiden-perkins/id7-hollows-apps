@@ -65,7 +65,7 @@ function acceptLegacy(stats, previous, row, policy) {
     if (live(values.speed)) stats.topSpeed = stats.topSpeed === null ? values.speed.value : Math.max(stats.topSpeed, values.speed.value);
     trackRpm(stats.rpm, values.rpm);
     const dt = previous ? row.recordedMs - previous.recordedMs : row.recordedMs;
-    const continuous = !!previous && previous.segment === row.segment && dt > 0 && dt <= policy.maxIntervalMs;
+    const continuous = !!previous && !row.gapBefore && previous.segment === row.segment && dt > 0 && dt <= policy.maxIntervalMs;
     updateVerticalSpeed(stats, row, continuous);
     if (!continuous) {
         stats.altitude.anchor = altitude;
@@ -220,7 +220,7 @@ function acceptCurrent(stats, previous, row, policy) {
     if (live(values.speed)) stats.topSpeed = stats.topSpeed === null ? values.speed.value : Math.max(stats.topSpeed, values.speed.value);
     trackRpm(stats.rpm, values.rpm);
     const dt = previous ? row.recordedMs - previous.recordedMs : row.recordedMs;
-    const continuous = !!previous && previous.segment === row.segment && dt > 0 && dt <= policy.maxIntervalMs;
+    const continuous = !!previous && !row.gapBefore && previous.segment === row.segment && dt > 0 && dt <= policy.maxIntervalMs;
     updateVerticalSpeed(stats, row, continuous);
     if (!continuous) {
         stats.altitude.anchor = altitude;

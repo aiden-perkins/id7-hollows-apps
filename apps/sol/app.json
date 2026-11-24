@@ -1,0 +1,84 @@
+{
+  "id": "sol",
+  "title": "Sol",
+  "description": "Whole-cabin RGB, iDrive presets, driving-mode colors and interior and exterior lighting effects",
+  "version": "1.1.0",
+  "vendor": "custom",
+  "loggingId": "OA9S",
+  "iconGlyph": "ambient",
+  "mguHmi": ["ID7"],
+  "requires": { "idrive7-renderd": "2.1.18", "mgu-inputgate": "1.1.0" },
+  "autostart": true,
+  "signals": {
+    "com.harman.infotainment.systemfunctions.tasu.tasu.InternalTasu": {
+      "_optional": "cabin RGB and exterior lamp tests",
+      "_instances": "SystemFunctionsInternalTasuInst1",
+      "_methods": ["sendTasuRequest"],
+      "_broadcasts": ["sendTasuResponse"]
+    },
+    "de.bmw.infotainment.misc.ComfortFunctionIuK": {
+      "_optional": "factory ambient light presets and status",
+      "statusAmbientLightInteriorColour": "rs",
+      "ambientLightInteriorColour": "w"
+    },
+    "de.bmw.infotainment.drivingexcitement.FES": {
+      "_optional": "driving-mode colors and Sport flash",
+      "statusFESVehicleDynamicSwitchHMI": "rs"
+    },
+    "de.bmw.infrastructure.VehicleCondition": {
+      "_optional": "vehicle sleep status",
+      "VehicleCondition": "s",
+      "vehicleConditionNoCrc": "s"
+    },
+    "de.bmw.infotainment.vehicle.Vehicle2": {
+      "_optional": "speed-based color and exterior test availability",
+      "statusCarSpeed2": "rs",
+      "statusStandstillFunctions": "rs"
+    },
+    "de.bmw.infotainment.vehicle.Vehicle": {
+      "_optional": "night dimming",
+      "statusDayNightChangeOver": "rs"
+    },
+    "de.bmw.body.Light": {
+      "_optional": "turn signal and hazard glow",
+      "StatusFunctionsIndicators": "s"
+    },
+    "de.bmw.body.DoorsWindowsRoofMirrors": {
+      "_optional": "open-door glow",
+      "CentralLockingSystemAndPanelStatus": "s"
+    },
+    "de.bmw.body.drivinglight.LightswitchOperation": {
+      "_optional": "factory exterior light switch",
+      "mainLightswitchState": "rs",
+      "lightswitchButtonAvailability": "rs",
+      "foglightFront": "rws",
+      "foglightRear": "rws",
+      "_methods": ["pushButtonAuto", "pushButtonDrivingLight", "pushButtonPositionLight", "pushButtonParkinglightLeft", "pushButtonParkinglightRight", "pushButtonLightOff"],
+      "_broadcasts": ["showLightswitchOperationFeedback"]
+    }
+  },
+  "screens": [
+    {
+      "name": "MAIN",
+      "kind": "canvas",
+      "title": "Sol",
+      "graphic": "MAIN_GFX",
+      "buttons": [["BTN_PREV", "Previous tab"], ["BTN_PAGE", "Next tab"], ["BTN_SETTINGS", "Settings"]]
+    }
+  ],
+  "settings": [
+    {
+      "key": "drive",
+      "label": "Steering wheel",
+      "type": "choice",
+      "default": "lhd",
+      "options": [["lhd", "Left"], ["rhd", "Right"]]
+    },
+    {
+      "key": "nightDim",
+      "label": "Dim cabin colors at night",
+      "type": "bool",
+      "default": false
+    }
+  ]
+}

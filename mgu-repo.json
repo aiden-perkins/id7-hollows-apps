@@ -3,6 +3,7 @@
   "apps": {
     "path": "apps/*",
     "manifest": "app.json",
+    "exclude": ["sol"],
     "mguHmi": ["ID7"],
     "requires": {
       "idrive7-renderd": "2.1.6",
@@ -14,5 +15,19 @@
       "sdk": "bmw-extracted/oap-sdk",
       "network": true
     }
-  }
+  },
+  "components": [
+    {
+      "id": "sol",
+      "kind": "app",
+      "path": "apps/sol",
+      "manifest": "app.json",
+      "build": {
+        "python": "cmd/mgu/tools/store_build.py",
+        "args": ["{id}"],
+        "sdk": "bmw-extracted/oap-sdk",
+        "network": true
+      }
+    }
+  ]
 }

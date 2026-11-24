@@ -1,11 +1,12 @@
 {
   "id": "trip_data",
   "title": "Trip Data",
-  "description": "Trip dashboard with vehicle-style tabs, trip history and independent recording recovery",
-  "version": "1.8.0",
+  "description": "Vehicle trip recording with a driving dashboard and trip history",
+  "version": "1.9.0",
   "vendor": "custom",
   "loggingId": "OA9F",
   "iconGlyph": "TRIP",
+  "autostart": true,
   "signals": {
     "de.bmw.infotainment.navigation.positioning.Positioning": {
       "_instances": "Main_Instance",
@@ -17,6 +18,16 @@
     "de.bmw.infotainment.vehicle.CDS": {
       "statusEngineSpeed2": "rs",
       "statusEngineStatus": "rs"
+    },
+    "de.bmw.infrastructure.VehicleCondition": {
+      "_optional": "Drive-readiness trip boundaries",
+      "VehicleCondition": "s",
+      "vehicleConditionNoCrc": "s"
+    },
+    "de.bmw.infotainment.lifecycle.lifecycle.Lifecycle": {
+      "_instances": "Front",
+      "_optional": "Head-unit power-off trip boundaries",
+      "powerStateDetailed": "rs"
     },
     "de.bmw.infotainment.vehicle.CDS2": {
       "statusInjectionVolume": "rs"
@@ -42,8 +53,8 @@
       "title": "Trip Data",
       "graphic": "MAIN_GFX",
       "buttons": [
-        ["BTN_RECORD", "Trip"],
-        ["BTN_SETTINGS", "Settings"]
+        ["BTN_RECORD", "Start trip"],
+        ["BTN_SETTINGS", "Browse"]
       ]
     },
     {
@@ -52,57 +63,25 @@
       "title": "Trip Data settings",
       "parent": "MAIN",
       "items": [
-        [
-          "text3",
-          "PREF_FIXED",
-          "US units / 3 decimal measurement places / 12-hour dates. Moving means above 1 mph; stationary periods stay recorded."
-        ],
-        [
-          "button",
-          "PREF_DEMO",
-          "Demo data"
-        ],
-        [
-          "button",
-          "PREF_AUTO",
-          "Automatic engine-session recording"
-        ],
-        [
-          "button",
-          "PREF_SMOOTH",
-          "Display graph smoothing"
-        ],
-        [
-          "text3",
-          "PREF_BANDS",
-          "Speed bands: 10 mph increments"
-        ],
-        [
-          "text3",
-          "PREF_STORAGE",
-          ""
-        ],
-        [
-          "text3",
-          "PREF_NOTICE",
-          ""
-        ],
-        [
-          "button",
-          "PREF_RETRY",
-          "Retry vehicle providers"
-        ]
+        ["text3", "BROWSE_INFO", "Choose a page"],
+        ["button", "BROWSE_0", ""],
+        ["button", "BROWSE_1", ""],
+        ["button", "BROWSE_2", ""],
+        ["button", "BROWSE_3", ""],
+        ["button", "BROWSE_4", ""],
+        ["button", "BROWSE_5", ""],
+        ["button", "BROWSE_6", ""],
+        ["button", "BROWSE_7", ""],
+        ["button", "BROWSE_8", ""],
+        ["button", "BROWSE_9", ""],
+        ["button", "PREF_AUTO", "Auto-start trips"],
+        ["button", "PREF_SMOOTH", "Smooth graphs"],
+        ["button", "PREF_SECTION", "Startup page"],
+        ["button", "PREF_DEMO", "Demo data"],
+        ["button", "PREF_RETRY", "Reconnect vehicle data"],
+        ["text", "PREF_STORAGE", "Trip storage"],
+        ["text3", "PREF_NOTICE", "Trips end when drive readiness ends."]
       ]
-    }
-  ],
-  "settings": [
-    {
-      "key": "demo", "label": "Demo data", "type": "choice", "default": "off",
-      "options": [["off", "Off"], ["on", "On (not recorded)"]]
-    },
-    {
-      "key": "section", "label": "Initial page", "type": "choice", "default": "trip",
-      "options": [["trip", "Trip"], ["elevation", "Elevation"], ["fuel", "Fuel"], ["gears", "Gears"], ["history", "History"], ["records", "Records"]]
     }
   ]
 }

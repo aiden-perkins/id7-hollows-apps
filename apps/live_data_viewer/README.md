@@ -12,33 +12,33 @@
 
 #### data
 
-| Data | units | min | max | upstream confirmed fast? | upstream? | implemented? | graphic | notes |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| RPM | # | 0 | 7000 | yes | yes | yes | bar graph |   |
-| Torque | lb/ft | 0 | 1000 | yes | yes | yes | bar graph |   |
-| Boost | psi | 0 | 32 | yes | yes | yes | bar graph |   |
-| Power | hp | 0 | 1000 | yes | yes | yes | bar graph | calculated from torque & rpm |
-| Exhaust Valve Controller | open/closed | N/A | N/A | not needed | yes | yes | graphic/buttons | make sure it uses the same as upstream |
-| Coolant Temperature | F | N/A | N/A | not needed | yes | yes | \# + units (#u) | changes color based on readiness |
-| Oil Temperature | F | N/A | N/A | not needed | yes | yes | #u | changes color based on readiness |
-| Transmission Temperature | F | N/A | N/A | not needed | yes | yes | #u | changes color based on readiness |
-| Fuel Tank | Gal/% | N/A | N/A | not needed | yes | yes | #u | show both gallons & percentage of 18 gal |
-| Battery | V | N/A | N/A | not needed | yes | yes | #u |   |
-| G-Force Meter | G | 0 | 1.5 | yes | yes | yes | circular with dot | show a little trail with min + max |
-| Tire Temperature | F | N/A | N/A | not needed | yes | yes | next to each wheel #u | changes color based on readiness |
-| Tire Speed | raw / mph | N/A | N/A | on-car check pending | `yes` | yes | next to each wheel #u |   |
-| Tire Pressure | psi | N/A | N/A | not needed | yes | yes | next to each wheel #u |   |
-| Front Wheel Steering Angle | degrees | N/A | N/A | on-car check pending | `yes` | yes | wheel moves #u |   |
-| Rear Wheel Steering Angle | degrees | N/A | N/A | no | no | slow | wheel moves #u | wheels should move 10x scale to actual |
-| Front Sway Bar Torque | nm | \-? | ? | no | no | slow | bar on front axle #u | negative/positive equates to left/right |
-| Rear Sway Bar Torque | nm | \-? | ? | no | no | slow | bar on rear axle #u | negative/positive equates to left/righ |
-| Transfer Case Power Distribution | % / estimated hp | 0% | 100% | on-car check pending | yes | yes | vertical bar and axle HP readouts |   |
-| Rear Differential Power Distribution | hp/lb-ft/% | ? | ? | no | no | no | bar on rear axle #u | disengaged = 50/50, engaged = 100% to a side |
-| Front Automatic Differential Brake | ? | ? | ? | no | no | no | bar on front axle #u | unsure what units |
-| Accelerator Pedal | % | 0 | 100 | on-car check pending | `yes` | yes | bar graph |   |
-| Brake Pedal | raw / bar | 0 | 62 raw / 84 bar | on-car check pending | `yes` | yes | bar graph |   |
-| Kickdown | on/off | N/A | N/A | no | no | needs confirming | unsure | either a button/card or something with the accel |
-| Parking Brake | on/releasing/engaging/off | N/A | N/A | not needed | mine is better | yes | unsure | probably a button/card - check if mine is better |
+| Data                                 | units                     | min | max             | graphic                           | notes                                          |
+| ------------------------------------ | ------------------------- | --- | --------------- | --------------------------------- | ---------------------------------------------- |
+| RPM                                  | #                         | 0   | 7000            | bar graph                         | done                                           |
+| Torque                               | lb/ft                     | 0   | 1000            | bar graph                         | done                                           |
+| Boost                                | psi                       | 0   | 32              | bar graph                         | done                                           |
+| Power                                | hp                        | 0   | 1000            | bar graph                         | done                                           |
+| Exhaust Valve Controller             | open/closed               | N/A | N/A             | graphic/buttons                   | make sure it uses the same as upstream         |
+| Coolant Temperature                  | F                         | N/A | N/A             | # + units (#u)                    | changes color based on readiness               |
+| Oil Temperature                      | F                         | N/A | N/A             | #u                                | changes color based on readiness               |
+| Transmission Temperature             | F                         | N/A | N/A             | #u                                | changes color based on readiness               |
+| Fuel Tank                            | Gal/%                     | N/A | N/A             | #u                                | done                                           |
+| Battery                              | V                         | N/A | N/A             | #u                                | done                                           |
+| G-Force Meter                        | G                         | 0   | 1.5             | circular with dot                 | done                                           |
+| Tire Temperature                     | F                         | N/A | N/A             | next to each wheel #u             | changes color based on readiness               |
+| Tire Speed                           | raw / mph                 | N/A | N/A             | next to each wheel #u             | number is wildly off                           |
+| Tire Pressure                        | psi                       | N/A | N/A             | next to each wheel #u             | done                                           |
+| Front Wheel Steering Angle           | degrees                   | N/A | N/A             | wheel moves #u                    | done                                           |
+| Rear Wheel Steering Angle            | degrees                   | N/A | N/A             | wheel moves #u                    | too slow                                       |
+| Front Sway Bar Torque                | nm                        | -?  | ?               | bar on front axle #u              | need to check                                  |
+| Rear Sway Bar Torque                 | nm                        | -?  | ?               | bar on rear axle #u               | need to check                                  |
+| Transfer Case Power Distribution     | % / estimated hp          | 0%  | 100%            | vertical bar and axle HP readouts | need to check                                  |
+| Rear Differential Power Distribution | hp/lb-ft/%                | ?   | ?               | bar on rear axle #u               | need to check                                  |
+| Front Automatic Differential Brake   | ?                         | ?   | ?               | bar on front axle #u              | need to check                                  |
+| Accelerator Pedal                    | %                         | 0   | 100             | bar graph                         | jumps around all over the place - not accurate |
+| Brake Pedal                          | raw / bar                 | 0   | 62 raw / 84 bar | bar graph                         | only showing 2 values                          |
+| Kickdown                             | on/off                    | N/A | N/A             | unsure                            | too slow                                       |
+| Parking Brake                        | on/releasing/engaging/off | N/A | N/A             | unsure                            | done                                           |
 
 #### ideas
 
@@ -53,25 +53,25 @@
 
 #### data
 
-| Data | Units | Source | notes | upstream? |
-| --- | --- | --- | --- | --- |
-| Oil Temperature | °F | driving |   | yes |
-| Coolant Temperature | °F | driving |   | yes |
-| Transmission Temperature | °F | driving |   | yes |
-| Rear Differential Temperature | °F | check ista | has a temp sensor | no |
-| Charge Air Temperature | °F |   | both dmes - after intercoolers | yes |
-| Internal Air Temperature | °F | bm3 | both dmes - before intercoolers | not both |
-| LPFP Target Pressure | PSI | bm3 |   | no |
-| LPFP Actual Pressure | PSI |   |   | yes |
-| HPFP Target Pressure | PSI |   |   | yes |
-| HPFP Actual Pressure | PSI |   |   | yes |
-| Boost Target Pressure | PSI |   |   | yes |
-| Boost Actual Pressure | PSI |   |   | yes |
-| Oil Pressure | PSI |   |   | yes |
-| Misfires | # |   | all 8 cylinders | yes |
-| Knocks Detected | # |   | both DMEs | yes |
-| Max Timing Correction | Degrees | bm3 | all 8 cylinders | no |
-| Outside Temperature | °F |   |   | yes |
+| Data                          | Units   | Source     | notes                                                                                                 | upstream? |
+| ----------------------------- | ------- | ---------- | ----------------------------------------------------------------------------------------------------- | --------- |
+| Oil Temperature               | °F      | driving    | done                                                                                                  | yes       |
+| Coolant Temperature           | °F      | driving    | done                                                                                                  | yes       |
+| Transmission Temperature      | °F      | driving    | done                                                                                                  | yes       |
+| Rear Differential Temperature | °F      | check ista | has a temp sensor - find it and add it                                                                | no        |
+| Charge Air Temperature        | °F      |            | done?                                                                                                 | yes       |
+| Internal Air Temperature      | °F      | bm3        | fix bank 1 not being there - change name to IAT - confirm it changes and is correct - maybe match bm3 | not both  |
+| LPFP Target Pressure          | PSI     | bm3        |                                                                                                       | no        |
+| LPFP Actual Pressure          | PSI     |            |                                                                                                       | yes       |
+| HPFP Target Pressure          | PSI     |            | change it to non abs                                                                                  | yes       |
+| HPFP Actual Pressure          | PSI     |            | change it to non abs                                                                                  | yes       |
+| Boost Target Pressure         | PSI     |            | confirm it is correct/fast                                                                            | yes       |
+| Boost Actual Pressure         | PSI     |            | confirm it is correct/fast                                                                            | yes       |
+| Oil Pressure                  | PSI     |            | done                                                                                                  | yes       |
+| Misfires                      | #       |            | done                                                                                                  | yes       |
+| Knocks Detected               | #       |            | done                                                                                                  | yes       |
+| Max Timing Correction         | Degrees | bm3        | all 8 cylinders                                                                                       | no        |
+| Outside Temperature           | °F      |            |                                                                                                       | yes       |
 
 #### ideas
 

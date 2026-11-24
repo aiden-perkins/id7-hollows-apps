@@ -10,6 +10,8 @@ import tempfile
 
 sys.dont_write_bytecode = True
 
+SOL_UPSTREAM_FILES = ('ambient.js', 'lights.js', 'lin.js', 'others.js', 'scenes.js', 'strobe.js')
+
 def app_source(args, app):
     local = args.root / 'apps' / app
     return local if (local / 'app.json').is_file() else args.upstream / 'apps' / app
@@ -91,7 +93,8 @@ def build(args):
     module.DIST = str(args.root / 'dist')
     module.SDK = str(args.root / 'bmw-extracted' / 'oap-sdk')
     module.KIT = str(args.upstream / 'kit')
-    module.shutil = RuntimeOverlay(args.root, args.upstream, local)
+    # Sol uses the newer stock runtime's background lifecycle and touch handling.
+    module.shutil = RuntimeOverlay(args.root, args.upstream, local and args.app != 'sol')
     (args.root / 'out').mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='mgu-source-', dir=str(args.root / 'out')) as work:
         apps = Path(work) / 'apps'
@@ -120,6 +123,11 @@ def build(args):
             (app / 'app.json').write_text(json.dumps(spec, indent=2) + '\n', encoding='utf-8')
         if local and args.app == 'live_data_viewer':
             shutil.copy2(args.upstream / 'apps' / 'car_vitals' / 'demo.js', app / 'vitals_demo.js')
+        if local and args.app == 'sol':
+            ambient = args.upstream / 'apps' / 'ambient_config'
+            for name in SOL_UPSTREAM_FILES:
+                shutil.copy2(ambient / name, app / name)
+            shutil.copy2(args.upstream / 'LICENSE', app / 'LICENSE')
         if not local:
             copy_app_data(args.root / 'apps' / args.app, app, spec)
         copy_app_data(args.root / 'bmw-extracted' / args.app, app, spec)

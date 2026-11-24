@@ -16,15 +16,17 @@ import upstream
 
 UPSTREAM_COMMIT = '9b5e9cf8a49399939d51d3458fb29b6a3cec8346'
 UPSTREAM_SHA256 = '153634148de77dfa88b21a3c7d9c1afd6d27ad528f932f79f98666e02dfeb150'
-UPSTREAM_URL = ('https://codeload.github.com/cauliflowermossgrape/idrive7-apps/tar.gz/'
-                + UPSTREAM_COMMIT)
+AUTOSTART_COMMIT = '71253d0424609c8fb1a47503fdaef4cd88ae403a'
+AUTOSTART_SHA256 = 'f205bc309b24f4cb1eeb65bb1c063ea051b2e469687101c63d4c6dff72cd9e56'
+UPSTREAM_URL = 'https://codeload.github.com/cauliflowermossgrape/idrive7-apps/tar.gz/'
 
 
-def fetch_upstream(work):
+def fetch_upstream(work, app):
+    commit, checksum = (AUTOSTART_COMMIT, AUTOSTART_SHA256) if app in ('sol', 'trip_data') else (UPSTREAM_COMMIT, UPSTREAM_SHA256)
     archive = work / 'upstream.tar.gz'
     digest = hashlib.sha256()
-    request = Request(UPSTREAM_URL, headers={'User-Agent': 'id7-hollows-apps-store-build'})
-    print('Downloading upstream build tools at ' + UPSTREAM_COMMIT, flush=True)
+    request = Request(UPSTREAM_URL + commit, headers={'User-Agent': 'id7-hollows-apps-store-build'})
+    print('Downloading upstream build tools at ' + commit, flush=True)
     with urlopen(request, timeout=60) as response, archive.open('wb') as target:
         while True:
             block = response.read(1024 * 1024)
@@ -32,12 +34,15 @@ def fetch_upstream(work):
                 break
             digest.update(block)
             target.write(block)
-    if digest.hexdigest() != UPSTREAM_SHA256:
+    if digest.hexdigest() != checksum:
         raise RuntimeError('Upstream source archive checksum does not match the pinned revision')
 
     destination = work / 'upstream'
-    prefix = 'idrive7-apps-' + UPSTREAM_COMMIT + '/'
+    prefix = 'idrive7-apps-' + commit + '/'
     directories = (('kit', 'tools'), ('kit', 'runtime'), ('kit', 'platform'))
+    extra = {'apps/car_vitals/demo.js'}
+    if app == 'sol':
+        extra = {'LICENSE'} | {'apps/ambient_config/' + name for name in upstream.SOL_UPSTREAM_FILES}
     with tarfile.open(archive, 'r:gz') as source:
         for member in source:
             if member.name == prefix[:-1] and member.isdir():
@@ -47,8 +52,7 @@ def fetch_upstream(work):
             relative = PurePosixPath(member.name[len(prefix):])
             if relative.is_absolute() or '..' in relative.parts:
                 raise RuntimeError('Unsafe upstream archive path: ' + member.name)
-            if (relative.parts[:2] not in directories
-                    and str(relative) != 'apps/car_vitals/demo.js'):
+            if relative.parts[:2] not in directories and str(relative) not in extra:
                 continue
             if member.isdir():
                 continue
@@ -82,7 +86,7 @@ def main():
         parser.error('App ID must match its directory name')
 
     with tempfile.TemporaryDirectory(prefix='mgu-store-upstream-') as temporary:
-        tooling = fetch_upstream(Path(temporary))
+        tooling = fetch_upstream(Path(temporary), args.app)
         upstream.build(argparse.Namespace(root=root, upstream=tooling, node=node, app=args.app))
         package = root / 'dist' / (args.app + '@' + spec['version'] + '.tgz')
         shutil.copyfile(package, output / package.name)

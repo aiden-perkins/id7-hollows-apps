@@ -3,7 +3,6 @@ const D = require('./definitions');
 const { DiagnosticServices } = require('./diagnostic');
 const drivingFast = new Set([
     'frontAxle', 'rearAxle', 'brakePressure', 'accelerator', 'kickdown',
-    'wheelSpeedFLH', 'wheelSpeedFRH', 'wheelSpeedRLH', 'wheelSpeedRRH',
     'swayFrontMotorActual', 'swayRearMotorActual', 'rearTorqueShare',
     'rpm', 'torque', 'gLat', 'gLong', 'horsepower', 'frontPower', 'rearPower', 'gForce',
 ]);

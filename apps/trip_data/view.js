@@ -1,12 +1,22 @@
 'use strict';
-const { rpmPeak, verticalSpeed } = require('./calculations');
+const { accept, create, rpmPeak, verticalSpeed } = require('./calculations');
+const { STALE_FINISH, chunkSequence } = require('./storage');
 const finite = (v) => Number.isFinite(v);
 function number(v, unit) { return finite(v) ? v.toFixed(3) + (unit ? ' ' + unit : '') : 'Unavailable'; }
 function date(at) {
-    if (!at) return 'Unknown';
+    if (!finite(at) || !finite(new Date(at).getTime())) return 'Unknown';
     const d = new Date(at), h = d.getHours(), pad = (v) => String(v).padStart(2, '0');
     return (h % 12 || 12) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds()) + (h >= 12 ? ' PM ' : ' AM ') +
         (d.getMonth() + 1) + '-' + d.getDate() + '-' + d.getFullYear();
+}
+function tripTitle(trip) {
+    return /^Trip \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(trip.name) ? date(trip.startedAt) : trip.name;
+}
+function tripStatus(trip, pending) {
+    if (pending) return 'Save pending';
+    if (trip.finishReason === STALE_FINISH || trip.finishReason === 'Closed after interruption') return 'Ended at last saved sample';
+    if (trip.samplesOmitted || trip.missingWallMs || trip.gaps && trip.gaps.length) return 'Some samples missing';
+    return '';
 }
 function coverage(ms, duration) { return duration > 0 ? number(ms / duration * 100, '%') : 'No observed interval yet'; }
 function mpg(miles, gallons, covered) {
@@ -28,10 +38,10 @@ function distanceSource(summary) {
         'GPS / WGS84 degrees assumed / unverified on-car';
 }
 function records(history) {
-    const trips = (history || []).filter((s) => s && !s.demo && s.status === 'finished' && s.stats && s.policy &&
+    const trips = (history || []).filter((s) => s && !s.demo && s.status === 'finished' && s.finishReason !== STALE_FINISH && s.stats && s.policy &&
         [1, 2, 3, 4].includes(s.policy.calculationVersion) && finite(s.stats.durationMs) && s.stats.durationMs > 0)
         .slice().sort((a, b) => a.startedAt - b.startedAt || String(a.id).localeCompare(String(b.id)));
-    const complete = (s) => !s.missingWallMs && !(s.gaps && s.gaps.length) && !s.interruptionReason &&
+    const complete = (s) => !s.missingWallMs && !s.samplesOmitted && !(s.gaps && s.gaps.length) && !s.interruptionReason &&
         !/interrupt|recover/i.test(s.finishReason || '');
     const definitions = [
         { id: 'topSpeed', label: 'Top vehicle speed', unit: 'mph', high: true,
@@ -92,8 +102,9 @@ class Projection {
         const peak = rpmPeak(row.values.rpm);
         if (peak !== null) this.rpmMax = this.rpmMax === null ? peak : Math.max(this.rpmMax, peak);
         const elapsed = this.lastRow && row.recordedMs - this.lastRow.recordedMs;
-        this.verticalFpm = verticalSpeed(this.heightFixes, row, this.lastRow && this.lastRow.segment === row.segment && elapsed > 0 && elapsed <= 5000);
-        if (this.lastRow && (this.lastRow.segment !== row.segment || row.recordedMs - this.lastRow.recordedMs > 6000)) {
+        const continuous = this.lastRow && !row.gapBefore && this.lastRow.segment === row.segment && elapsed > 0 && elapsed <= 5000;
+        this.verticalFpm = verticalSpeed(this.heightFixes, row, continuous);
+        if (row.gapBefore || this.lastRow && (this.lastRow.segment !== row.segment || elapsed > 5000)) {
             ['speed', 'altitude', 'mpg', 'distance'].forEach((key) => { point.gaps[key] = true; });
         }
         this.lastRow = { segment: row.segment, recordedMs: row.recordedMs };
@@ -141,11 +152,29 @@ class Projection {
         }
     }
 }
-async function load(storage, id, extra) {
+async function load(storage, trip, pending, cancelled) {
     const projection = new Projection();
-    await storage.samples(id, (row) => projection.add(row));
-    (extra || []).forEach((row) => projection.add(row));
-    return projection;
+    let last = null, restored = null, skipped = 0;
+    if (pending.onDisk) {
+        const names = storage.chunkNames(trip.id);
+        const hasLaterChunk = names.length && chunkSequence(names[names.length - 1]) > (trip.sequence || 0);
+        const incomplete = trip.finishReason === STALE_FINISH && hasLaterChunk;
+        let stats = incomplete && !trip.samplesOmitted && [2, 3, 4].includes(trip.policy.calculationVersion) ? create(trip.policy) : null;
+        skipped = await storage.samples(trip.id, (row) => {
+            projection.add(row);
+            if (stats) {
+                try { accept(stats, last, row, trip.policy); }
+                catch (error) { stats = null; }
+            }
+            last = row;
+        }, names, cancelled);
+        if (incomplete && last && last.recordedMs >= trip.stats.durationMs) {
+            restored = { endedAt: last.wallAt, lastWallAt: last.wallAt, timelineMs: last.elapsedMs };
+            if (stats && !skipped) restored.stats = stats;
+        }
+    }
+    if (!cancelled()) pending.rows.forEach((row) => projection.add(row));
+    return { projection, restored, skipped };
 }
 const unit = (metric) => metric === 'speed' ? 'mph' : metric === 'altitude' ? 'ft' : 'US MPG';
 function windowPoints(projection, config) {
@@ -172,5 +201,5 @@ function duration(ms) {
     const seconds = Math.floor(ms / 1000), h = Math.floor(seconds / 3600);
     return String(h).padStart(2, '0') + ':' + String(Math.floor(seconds / 60) % 60).padStart(2, '0') + ':' + String(seconds % 60).padStart(2, '0');
 }
-module.exports = { number, date, coverage, mpg, duration, distanceCoverage, movingDistanceCoverage, distanceSource, records,
+module.exports = { number, date, tripTitle, tripStatus, coverage, mpg, duration, distanceCoverage, movingDistanceCoverage, distanceSource, records,
     Projection, load, unit, windowPoints, selectedPoint, moveCursor };

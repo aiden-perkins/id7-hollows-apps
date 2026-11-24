@@ -19,6 +19,7 @@ const definitions = [];
 const converters = {
     rpm: { factor: 0.25, offset: 0, unit: 'rpm', maxRaw: 48000 },
     speed: { factor: 1 / 64, offset: 0, multiplier: 1 / 1.609344, unit: 'mph', maxRaw: 22400 },
+    wheelSpeed: { factor: 1 / 64, offset: -0x7FFF / 64, multiplier: 1 / 1.609344, unit: 'mph' },
     engineTemperature: { factor: 1, offset: -48, multiplier: 1.8, displayOffset: 32, unit: 'F' },
     ambient: { factor: 0.5, offset: -40, multiplier: 1.8, displayOffset: 32, unit: 'F', maxRaw: 251 },
     acceleration: { factor: 0.002, offset: -65, multiplier: 1 / 9.80665, unit: 'g', maxRaw: 65000 },
@@ -264,18 +265,13 @@ candidate('tyreTemperatureUnit', 'Reported tire temperature unit', 'sources', 'T
         notes: 'Saved aggregate tyre qualifiers do not identify an individual wheel state or sensor identity.' }, common));
 });
 ['FLH', 'FRH', 'RLH', 'RRH'].forEach((wheel, index) => {
-    const diag = { minBytes: 19, qualityAt: 15 + index };
-    const rawId = 'wheelSpeedRaw' + wheel;
-    candidate(rawId, 'Wheel speed ' + wheel + ' (raw)', 'driving', 'Motion', 'powertrain', 'ActualValueRPMWheel',
+    candidate('wheelSpeed' + wheel, 'Wheel speed ' + wheel, 'driving', 'Motion', 'powertrain', 'ActualValueRPMWheel',
         wheel === 'FRH' ? 'actualValueRPMwheelFRH' : 'actualValueRPMWheel' + wheel, 65534,
-        'Upstream Live Data wheel-speed word. Each wheel has its own validity qualifier. Physical conversion is unknown.',
-        { read: false, decoder: 'unscaled', staleMs: 2000, qualifier: 'qualifierActualValueRPMWheel' + wheel, validQualifiers: validSignal });
-    diagnostic('wheelSpeed' + wheel, 'Wheel speed ' + wheel, 'sources', 'Motion', 0x29, 0xDBE4, index * 2, 2, {
-        unit: 'mph', scale: 0.01 / 1.609344, pollMs: 100, staleMs: 2000, pages: ['driving'], fallbackFor: rawId,
-        diag: Object.assign({ signed: true }, diag),
-        notes: 'ISTA IB_G05 RES_0XDBE4_D: wheel-specific signed BE16 / 100 km/h, converted to mph. Own signal quality must be >50% and <=100%. Direction is independently reported, not inferred from gear or speed.' });
+        'The saved standstill Powertrain notification is 0xFF7F, which byte-swaps to 0x7FFF. Use the matching AiM BMW F-Series 0x254 wheel-speed scale (about 0.01562 km/h per count), centered on that zero word and converted to mph.',
+        { read: false, decoder: 'wheelSpeed', swapBytes: true, staleMs: 2000,
+            qualifier: 'qualifierActualValueRPMWheel' + wheel, validQualifiers: validSignal });
     diagnostic('wheelDirection' + wheel, 'Wheel direction ' + wheel, 'sources', 'Motion', 0x29, 0xDBE4, 10 + index, 1, {
-        decoder: 'wheelDirection', numeric: false, pollMs: 100, staleMs: 2000, diag,
+        decoder: 'wheelDirection', numeric: false, pollMs: 100, staleMs: 2000, diag: { minBytes: 19, qualityAt: 15 + index },
         notes: 'ISTA IB_G05 TAB_DREHRICHTUNG: 0 standstill, 1 forward, 2 reverse; 3 undefined remains unavailable. Own wheel quality must be >50% and <=100%.' });
 });
 candidate('rearTorqueShare', 'Rear axle torque share', 'driving', 'Drivetrain', 'thermal', 'basicDataSet',
@@ -380,17 +376,15 @@ temperature('outsideDme', 'Outside air (DME)', 'sources', 'Air', 0x12, 0x5512, 1
     notes: 'Upstream Live Data DME8FF_R 5512 ambient temperature, byte * 0.5 - 40 Celsius.' });
 preferred('outsideStatus', 'Outside air', 'Air', ['outside', 'outsideDme'], 'Prefer the vehicle ambient signal, then upstream DME ambient temperature.');
 
-const psiPerKpa = 0.14503773773020923;
-const absolutePsi = { unit: 'psi', staleMs: 10000 };
-pressure('statusFuelHighActual', 'High-pressure fuel (actual, absolute)', 2000, [
-    { did: 0x58EF, at: 0, bytes: 2, scale: 0.5 * psiPerKpa, physicalMax: 50000 * psiPerKpa },
-    { did: 0x5658, at: 0, bytes: 2, scale: 2 * psiPerKpa, physicalMax: 50000 * psiPerKpa },
-    { did: 0xF459, at: 0, bytes: 2, scale: 10 * psiPerKpa, physicalMax: 50000 * psiPerKpa },
-], 'Upstream Live Data rail actual pressure, then Car Vitals absolute rail pressure. Same absolute reference as the target.', absolutePsi);
-pressure('fuelHighTarget', 'High-pressure fuel (target, absolute)', 2000, [
-    { did: 0x5837, at: 0, bytes: 2, scale: 0.5 * psiPerKpa, physicalMax: 50000 * psiPerKpa },
-    { did: 0x56C1, at: 0, bytes: 2, scale: 2 * psiPerKpa, physicalMax: 50000 * psiPerKpa },
-], 'Upstream Live Data DME8FF_R rail-pressure control target in absolute pressure.', absolutePsi);
+pressure('statusFuelHighActualAbsolute', 'High-pressure fuel (actual, absolute)', 2000, [
+    { did: 0x58EF, at: 0, bytes: 2, scale: 0.5, physicalMax: 50000 },
+    { did: 0x5658, at: 0, bytes: 2, scale: 2, physicalMax: 50000 },
+    { did: 0xF459, at: 0, bytes: 2, scale: 10, physicalMax: 50000 },
+], 'Upstream Live Data rail actual pressure, then Car Vitals absolute rail pressure.', { staleMs: 10000 });
+pressure('fuelHighTargetAbsolute', 'High-pressure fuel (target, absolute)', 2000, [
+    { did: 0x5837, at: 0, bytes: 2, scale: 0.5, physicalMax: 50000 },
+    { did: 0x56C1, at: 0, bytes: 2, scale: 2, physicalMax: 50000 },
+], 'Upstream Live Data DME8FF_R rail-pressure control target in absolute pressure.', { staleMs: 10000 });
 pressure('statusAmbientPressure', 'Ambient pressure', 5000, [
     { did: 0x4201, at: 0, bytes: 2, scale: 0.00390625, physicalMin: 50, physicalMax: 115 },
     { did: 0xF433, at: 0, bytes: 1, physicalMin: 50, physicalMax: 115 },
@@ -414,6 +408,8 @@ pressure('oilPressureAbsolute', 'Oil pressure (absolute)', 2000, [
     { did: 0x586F, at: 0, bytes: 2, signed: true, scale: 0.1, physicalMin: 0, physicalMax: 1200 },
 ], 'Upstream Live Data oil pressure candidates in absolute hPa, converted to kPa.', { staleMs: 10000 });
 [
+    ['statusFuelHighActual', 'High-pressure fuel (actual, gauge)', 'statusFuelHighActualAbsolute'],
+    ['fuelHighTarget', 'High-pressure fuel (target, gauge)', 'fuelHighTargetAbsolute'],
     ['statusBoostTarget', 'Boost target', 'statusBoostTargetAbsolute'],
     ['statusBoostActual', 'Boost actual', 'statusBoostActualAbsolute'],
     ['oilPressure', 'Oil pressure', 'oilPressureAbsolute'],

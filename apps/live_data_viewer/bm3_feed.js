@@ -1,5 +1,5 @@
 'use strict';
-const { Diag } = require('./kit/diag');
+const { Diag, hex } = require('./kit/diag');
 const channels = require('./bm3_channels');
 const catalog = require('./bm3_catalog');
 
@@ -9,6 +9,10 @@ const catalog = require('./bm3_catalog');
 // This is a new scheduler, not the legacy viewer's scalar polling policy.
 const DEADLINE_MS = 1200, FRESH_MS = 1500;
 const POLL_RETRY_MS = 250, MAX_POLL_RETRIES = 3;
+const ORDINARY_DID = 0xF300, RAM_DIDS = [0xF301, 0xF302];
+const ROM_MARKER_BYTES = 255, ROM_READ_MS = 4500;
+const ROM_READ_FALLBACK_NRCS = [0x11, 0x12, 0x13, 0x31];
+const REPLY_ECHO_BYTES = { 0x22: 2, 0x23: 0, 0x2C: 3 };
 const CORRECTION_IDS = [32, 33, 34, 35], STATUS_FRESH_MS = 6000;
 const normalize = (s) => String(s || '').replace(/\s+/g, ' ').trim().toLowerCase();
 const word = (n) => [Math.floor(n / 256) & 255, n & 255];
@@ -27,11 +31,40 @@ function retryable(error) {
 function checked(u, length) {
     if (!u) throw new Error('Diagnostic response timed out');
     if (!positive(u)) {
-        const error = new Error('UDS refused request (NRC ' + u[2].toString(16).toUpperCase() + ')');
+        const error = new Error('UDS ' + hex(u[1]) + ' refused (NRC ' + hex(u[2]) + ')');
         error.nrc = u[2]; throw error;
     }
     if (length !== undefined && u.length !== length) throw new Error('Unexpected diagnostic payload length');
     return u;
+}
+const knownRom = (key) => Object.prototype.hasOwnProperty.call(catalog.roms, key);
+function requireRom(key) {
+    if (!key) throw new Error('Malformed BM3 CustomROM marker');
+    if (!knownRom(key)) throw new Error('BM3 ROM ' + key + ' has no RAM channel catalog');
+    return key;
+}
+function customRom(marker) {
+    if (marker.startsWith('BM3_')) {
+        // MG1 captures in live_adjustments have a 64- or 80-byte binary block, then ROM + five build characters.
+        const delimiter = [68, 84].find((offset) => marker.startsWith('~|~', offset));
+        if (delimiter !== undefined) {
+            const tag = /^_+#([A-Z0-9]+)[A-Z0-9]{5}\x00/.exec(marker.slice(delimiter + 3));
+            return requireRom(tag && tag[1]);
+        }
+        // The G87 S58 capture has its only '#' at byte 101, followed by ROM, build and vehicle fields.
+        if (marker.indexOf('#') === 101 && marker.lastIndexOf('#') === 101) {
+            const tag = /^#([A-Z0-9]{9})[A-Z0-9]{5}_[A-Z0-9_]*\x00/.exec(marker.slice(101));
+            if (tag) return requireRom(tag[1]);
+        }
+    }
+    if (marker.includes('BM3_R')) {
+        const tags = Array.from(new Set(marker.match(/#[A-Za-z0-9]+/g) || []));
+        if (tags.length !== 1) throw new Error('BM3 CustomROM marker has no unique ROM tag');
+        const tag = tags[0].slice(1), key = tag.slice(0, -5);
+        if (!knownRom(tag) && knownRom(key) && /^[A-Z0-9]{5}$/.test(tag.slice(-5))) return key;
+        return requireRom(tag);
+    }
+    return null;
 }
 function scalar(d, ram) {
     if (![1, 2, 4].includes(d.bytes)) return false;
@@ -191,37 +224,40 @@ class Bm3Feed {
             run.ready = null;
         }
     }
-    _request(run, target, sid, data, cleanup) {
-        const request = () => this._exchange(run, target, sid, data, cleanup);
+    _request(run, target, sid, data, { cleanup = false, timeoutMs = DEADLINE_MS } = {}) {
+        const request = () => this._exchange(run, target, sid, data, cleanup, timeoutMs);
         return run.withTransport ? run.withTransport(request) : request();
     }
-    async _exchange(run, target, sid, data, cleanup) {
+    async _exchange(run, target, sid, data, cleanup, timeoutMs) {
         if (run.lost || (!run.active && !cleanup)) throw new Error('BM3 acquisition stopped');
-        const echo = data.slice(0, sid === 0x2C ? 3 : 2);
-        const accept = (u) => u.length >= 3 && ((u[0] === sid + 0x40 && echo.every((b, i) => u[i + 1] === b)) ||
-            (u[0] === 0x7F && u[1] === sid));
-        run.pending = { expiresAt: Date.now() + DEADLINE_MS, cleanup: !!cleanup };
+        const echo = data.slice(0, REPLY_ECHO_BYTES[sid]);
+        const accept = (u) => (u[0] === sid + 0x40 && echo.every((b, i) => u[i + 1] === b)) ||
+            (u.length >= 3 && u[0] === 0x7F && u[1] === sid);
+        run.pending = { expiresAt: Date.now() + timeoutMs, cleanup };
         try {
             // Await the native send AND its reply/deadline. Never release the shared
             // transport slot just because a UI generation or response timer changed.
-            const u = await run.diag.physical(target, sid, data, DEADLINE_MS, accept, {
-                maxRetries: 0, callTimeoutMs: DEADLINE_MS, hardTimeoutMs: DEADLINE_MS, pendingTimeoutMs: DEADLINE_MS,
+            const u = await run.diag.physical(target, sid, data, timeoutMs, accept, {
+                maxRetries: 0, callTimeoutMs: timeoutMs, hardTimeoutMs: timeoutMs, pendingTimeoutMs: timeoutMs,
             });
             if (!cleanup && !run.active && sid !== 0x2C) throw new Error('BM3 acquisition stopped');
             return u;
         } finally { run.pending = null; }
     }
     _slot(target, did) { return target + ':' + did; }
-    async _vacant(run, target, did) {
-        const u = await this._request(run, target, 0x22, word(did));
-        // Only an explicit unknown-DID reply establishes a vacant slot. A timeout,
-        // session refusal, or existing positive response is not permission to overwrite.
-        if (!u || u[0] !== 0x7F || u[2] !== 0x31) throw new Error('Dynamic DID ' + did.toString(16).toUpperCase() + ' occupied or unavailable');
+    async _vacant(run, target, dids) {
+        for (const did of dids) {
+            const u = await this._request(run, target, 0x22, word(did));
+            // An undefined slot responds with NRC 31. A positive reply sends us to the next slot.
+            if (u && u[0] === 0x7F && u[2] === 0x31) return did;
+            checked(u);
+        }
+        throw new Error('Dynamic DID ' + dids.map((did) => hex(did, 4)).join('/') + ' already in use');
     }
     async _clear(run, target, did) {
         const key = this._slot(target, did);
         if (!run.owned.has(key)) return;
-        checked(await this._request(run, target, 0x2C, [3].concat(word(did)), true), 4);
+        checked(await this._request(run, target, 0x2C, [3].concat(word(did)), { cleanup: true }), 4);
         run.owned.delete(key);
     }
     async _define(run, target, did, entries, ram, identity) {
@@ -231,38 +267,52 @@ class Bm3Feed {
             const id = parseInt(entry.d.pid, 16);
             data = data.concat(ram ? address(id).concat(word(entry.d.bytes)) : word(id).concat([1, entry.d.bytes]));
         });
-        if (data.length > 240 || entries.reduce((n, e) => n + e.d.bytes, 0) > (identity ? 255 : 96))
+        if (data.length > 240 || entries.reduce((n, e) => n + e.d.bytes, 0) > (identity ? ROM_MARKER_BYTES : 96))
             throw new Error('BM3 aggregate exceeds conservative payload budget');
-        checked(await this._request(run, target, 0x2C, data), 4);
+        const reply = checked(await this._request(run, target, 0x2C, data));
         run.owned.set(this._slot(target, did), { target, did });
+        checked(reply, 4);
     }
-    async _memory(run, target, pid) {
-        await this._clear(run, target, 0xF301);
-        await this._define(run, target, 0xF301, [{ d: { pid, bytes: 255 } }], true, true);
-        const u = checked(await this._request(run, target, 0x22, [0xF3, 1]), 258);
-        return Buffer.from(u.slice(3)).toString('latin1');
+    async _readRomMarker(run, target, did, custom) {
+        await this._clear(run, target, did);
+        const pid = custom ? '807FFE50' : '8005FE1E';
+        const options = { timeoutMs: ROM_READ_MS };
+        let dynamicNrc;
+        try {
+            await this._define(run, target, did, [{ d: { pid, bytes: ROM_MARKER_BYTES } }], true, true);
+            const reply = checked(await this._request(run, target, 0x22, word(did), options), ROM_MARKER_BYTES + 3);
+            return Buffer.from(reply.slice(3)).toString('latin1');
+        } catch (error) {
+            // Some DMEs reject the marker's dynamic definition or read. Try the read-only service
+            // used by live_adjustments after an explicit service, format or range refusal.
+            if (!run.active || run.lost || !ROM_READ_FALLBACK_NRCS.includes(error.nrc)) throw error;
+            dynamicNrc = error.nrc;
+        }
+        await this._clear(run, target, did);
+        // The reply carries no address. Keep this read serialized with other BM3 requests.
+        const data = [0x14].concat(address(parseInt(pid, 16)), [ROM_MARKER_BYTES]);
+        const reply = await this._request(run, target, 0x23, data, options);
+        if (custom && reply && reply[0] === 0x7F) {
+            const directNrc = reply[2];
+            // A stock DME can reject the custom address and lack support for direct reads.
+            // The stock marker can still be read through a dynamic DID.
+            if (directNrc === 0x31 || (dynamicNrc === 0x31 && ROM_READ_FALLBACK_NRCS.includes(directNrc))) return '';
+        }
+        return Buffer.from(checked(reply, ROM_MARKER_BYTES + 1).slice(1)).toString('latin1');
     }
-    async _identifyRom(run, target) {
+    async _identifyRom(run, target, did) {
         // Native lqwH57IWj / dQP4UQV51, independently corroborated by upstream
         // live_adjustments for the custom marker. Never substitute an SWFL ID for a ROM.
-        let custom = '';
-        try { custom = await this._memory(run, target, '807FFE50'); }
-        catch (error) { if (!run.active || run.lost || error.nrc !== 0x31) throw error; }
-        if (custom.includes('BM3_R')) {
-            const keys = [];
-            custom.replace(/#([A-Za-z0-9]+)/g, (match, key) => { keys.push(key); return match; });
-            const unique = Array.from(new Set(keys));
-            if (unique.length === 1 && Object.prototype.hasOwnProperty.call(catalog.roms, unique[0])) return unique[0];
-            throw new Error('Custom ROM marker has no unique supported ROM key');
-        }
-        const stock = await this._memory(run, target, '8005FE1E');
-        const keys = (stock.match(/[A-Za-z0-9]+/g) || []).filter((key) => Object.prototype.hasOwnProperty.call(catalog.roms, key));
+        const rom = customRom(await this._readRomMarker(run, target, did, true));
+        if (rom) return rom;
+        const stock = await this._readRomMarker(run, target, did, false);
+        const keys = (stock.match(/[A-Za-z0-9]+/g) || []).filter(knownRom);
         const unique = Array.from(new Set(keys));
         if (unique.length !== 1) throw new Error('No exact supported ROM identity');
         return unique[0];
     }
     async _ordinary(run, bank) {
-        await this._vacant(run, bank.target, 0xF300);
+        await this._vacant(run, bank.target, [ORDINARY_DID]);
         const definitions = catalog.engines[run.engine].map((id) => catalog.definitions[id]), entries = [];
         for (const channel of channels.filter((c) => c.id < 23)) {
             const candidates = definitions.filter((d) => normalize(d.name) === normalize(channel.name) && scalar(d, false));
@@ -276,19 +326,19 @@ class Bm3Feed {
             else bank.reasons[channel.id] = 'No supported, length-matched DID in selected engine catalog';
         }
         if (entries.length) {
-            await this._define(run, bank.target, 0xF300, entries, false);
-            bank.groups.push({ did: 0xF300, entries, ram: false });
+            await this._define(run, bank.target, ORDINARY_DID, entries, false);
+            bank.groups.push({ did: ORDINARY_DID, entries, ram: false });
         }
     }
     async _ram(run, bank) {
-        await this._vacant(run, bank.target, 0xF301);
-        bank.rom = await this._identifyRom(run, bank.target);
+        const did = await this._vacant(run, bank.target, RAM_DIDS);
+        bank.rom = await this._identifyRom(run, bank.target, did);
         if (run.timingOnly && bank.timingRom !== bank.rom) {
             bank.timingRom = bank.rom; bank.timingPeaks = {};
         }
-        await this._clear(run, bank.target, 0xF301);
+        await this._clear(run, bank.target, did);
         const definitions = catalog.roms[bank.rom].map((id) => catalog.definitions[id]), entries = [];
-        const corrections = correctionEntries(definitions, run.timingOnly && run.engine === 'N63T3');
+        const corrections = correctionEntries(definitions, run.engine === 'N63T3');
         const wanted = run.timingOnly ? CORRECTION_IDS.map((id) => channels[id]) : channels.filter((c) => c.id >= 23);
         for (const channel of wanted) {
             const correction = corrections.find((entry) => entry.id === channel.id);
@@ -301,14 +351,15 @@ class Bm3Feed {
                 unique.length ? 'Array or conversion layout is not proven' : 'No exact scalar definition in this ROM';
         }
         if (entries.length) {
-            await this._define(run, bank.target, 0xF301, entries, true);
-            bank.groups.push({ did: 0xF301, entries, ram: true });
+            await this._define(run, bank.target, did, entries, true);
+            bank.groups.push({ did, entries, ram: true });
         }
     }
-    async _cleanup(run, target) {
+    async _cleanup(run, target, dids) {
         if (!run.diag || run.lost) return;
         for (const slot of Array.from(run.owned.values())) {
             if (target !== undefined && slot.target !== target) continue;
+            if (dids && !dids.includes(slot.did)) continue;
             try { await this._clear(run, slot.target, slot.did); }
             catch (error) {
                 this.ctx.log.warn('BM3 dynamic DID cleanup: ' + error.message);
@@ -320,7 +371,9 @@ class Bm3Feed {
     async _poll(run, bank) {
         for (const group of bank.groups) {
             const size = group.entries.reduce((n, e) => n + e.d.bytes, 0);
-            const u = checked(await this._request(run, bank.target, 0x22, word(group.did)), size + 3);
+            let u;
+            try { u = checked(await this._request(run, bank.target, 0x22, word(group.did)), size + 3); }
+            catch (error) { return { group, error }; }
             const now = Date.now(), raw = {}; let offset = 3;
             group.entries.forEach((entry) => { raw[entry.id] = rawValue(u, offset, entry.d, group.ram); offset += entry.d.bytes; });
             if (raw[1] !== undefined) bank.ambient = { value: raw[1], at: now };
@@ -343,6 +396,7 @@ class Bm3Feed {
         while (bank.arrivals.length > 128 || bank.arrivals[0] < now - 2000) bank.arrivals.shift();
         bank.hz = bank.arrivals.length > 1 && now > bank.arrivals[0] ?
             (bank.arrivals.length - 1) * 1000 / (now - bank.arrivals[0]) : 0;
+        return null;
     }
     async _run(run) {
         if (!Object.prototype.hasOwnProperty.call(catalog.engines, run.engine)) throw new Error('Select the exact BM3 engine family in Settings');
@@ -351,20 +405,23 @@ class Bm3Feed {
         try {
             await this._open(run);
             for (const bank of this.banks) {
+                let ramError;
                 for (const prepare of run.timingOnly ? [this._ram] : [this._ordinary, this._ram]) {
                     if (!run.active) return;
                     try { await prepare.call(this, run, bank); }
                     catch (error) {
+                        if (!run.active) return;
                         const ram = prepare === this._ram;
                         const failed = run.timingOnly ? CORRECTION_IDS.map((id) => channels[id]) :
                             channels.filter((c) => ram ? c.id >= 23 : c.id < 23);
                         failed.forEach((c) => { bank.reasons[c.id] = error.message; });
-                        await this._clear(run, bank.target, ram ? 0xF301 : 0xF300);
+                        if (ram) ramError = error.message;
+                        await this._cleanup(run, bank.target, ram ? RAM_DIDS : [ORDINARY_DID]);
                     }
                 }
                 const count = bank.groups.reduce((n, group) => n + group.entries.length, 0);
                 bank.readyStatus = (bank.rom ? 'ROM ' + bank.rom + ' / ' : '') + count +
-                    (run.timingOnly ? '/4 timing channels defined' : '/44 defined');
+                    (run.timingOnly ? '/4 timing channels defined' : '/44 defined') + (ramError ? ' / RAM ' + ramError : '');
                 bank.status = bank.readyStatus;
                 this._notify();
             }
@@ -372,25 +429,33 @@ class Bm3Feed {
                 for (const bank of this.banks) {
                     if (!run.active) return;
                     if (!bank.groups.length || Date.now() < bank.retryAt) continue;
-                    try {
-                        await this._poll(run, bank);
+                    const failure = await this._poll(run, bank);
+                    if (!run.active || run.lost) return;
+                    if (!failure) {
                         const recovered = bank.failures > 0;
                         bank.failures = 0; bank.retryAt = 0;
                         if (recovered) { bank.status = bank.readyStatus; this._notify(); }
+                        continue;
                     }
-                    catch (error) {
-                        if (!run.active || run.lost) return;
-                        bank.samples = {}; bank.hz = 0; bank.arrivals = []; bank.lastCycle = 0; bank.ambient = null;
-                        if (retryable(error) && bank.failures < MAX_POLL_RETRIES) {
-                            bank.failures++;
-                            bank.retryAt = Date.now() + POLL_RETRY_MS * bank.failures;
-                            bank.status = error.message + '; retry ' + bank.failures + '/' + MAX_POLL_RETRIES;
-                        } else {
-                            bank.groups = []; bank.status = error.message;
-                            await this._cleanup(run, bank.target);
-                        }
-                        this._notify();
+                    const { group, error } = failure;
+                    const message = (group.ram ? 'RAM ' : 'DID ') + error.message;
+                    group.entries.forEach(({ id }) => {
+                        delete bank.samples[id];
+                        bank.reasons[id] = error.message;
+                    });
+                    if (!group.ram) bank.ambient = null;
+                    bank.hz = 0; bank.arrivals = []; bank.lastCycle = 0;
+                    if (retryable(error) && bank.failures < MAX_POLL_RETRIES) {
+                        bank.failures++;
+                        bank.retryAt = Date.now() + POLL_RETRY_MS * bank.failures;
+                        bank.status = message + ' / retry ' + bank.failures + '/' + MAX_POLL_RETRIES;
+                    } else {
+                        bank.groups = bank.groups.filter((active) => active !== group);
+                        bank.failures = 0; bank.retryAt = 0;
+                        bank.readyStatus = message; bank.status = message;
+                        await this._cleanup(run, bank.target, [group.did]);
                     }
+                    this._notify();
                 }
                 // Back off failed DMEs independently, without holding up a healthy DME.
                 const next = this.banks.filter((bank) => bank.groups.length).map((bank) => bank.retryAt);

@@ -2,7 +2,7 @@
   "id": "live_data_viewer",
   "title": "Live Data Viewer",
   "description": "Driving dynamics, Car Status and a dual-DME BM3 channel grid",
-  "version": "1.10.0",
+  "version": "1.10.1",
   "vendor": "custom",
   "loggingId": "OA9E",
   "iconGlyph": "LIVE",
@@ -115,11 +115,11 @@
     },
     {
       "key": "bm3TransportNote", "label": "BM3 diagnostic ownership", "type": "text",
-      "default": "Use alone: stop phone BM3, loggers and other diagnostic apps. Temporarily defines F300/F301 with service 2C; no tuning or flash writes. Occupied slots are never overwritten."
+      "default": "Run one diagnostic app at a time. The viewer temporarily defines F300 and uses a free RAM slot (F301 or F302) for monitoring."
     },
     {
       "key": "bm3AccuracyNote", "label": "BM3 availability", "type": "text",
-      "default": "Exact ROM match required independently per DME. Unproven cylinder-correction array elements and injection-end arrays remain --. DME labels are local ECU slots, not a physical-cylinder map."
+      "default": "Each DME needs an exact ROM match. Timing corrections use DME-local cylinder slots. Channels without a verified definition or array mapping display --."
     },
     {
       "key": "bm3SpeedNote", "label": "BM3 refresh", "type": "text",

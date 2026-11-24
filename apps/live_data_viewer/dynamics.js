@@ -9,7 +9,7 @@ const G_TRAIL_MS = 10000;
 const wheelFields = [
     { prefix: 'pressure', unit: 'psi', label: 'PSI', places: 0 },
     { prefix: 'tyreTemp', unit: 'F', label: 'F', places: 0 },
-    { prefix: 'wheelSpeed', unit: 'mph', label: 'MPH', places: 1, rawPrefix: 'wheelSpeedRaw' },
+    { prefix: 'wheelSpeed', unit: 'mph', label: 'MPH', places: 1 },
 ];
 function reading(vm, id) {
     const state = get(vm, id);
@@ -104,9 +104,8 @@ function wheel(cv, t, x, y, angle, cosine, sine) {
 function wheelData(cv, t, vm, wheelId, x, y) {
     const options = { align: 'center', font: 'num' };
     wheelFields.forEach((field, index) => {
-        const raw = field.rawPrefix ? liveRaw(vm, field.rawPrefix + wheelId) : null;
-        const current = raw === null ? physical(vm, field.prefix + wheelId, field.unit) : { value: raw, live: true };
-        const shown = raw === null ? fmt(current.value, field.places) + ' ' + field.label : fmt(raw, 0) + ' RAW';
+        const current = physical(vm, field.prefix + wheelId, field.unit);
+        const shown = fmt(current.value, field.places) + ' ' + field.label;
         const size = Math.min(26, 26 * 108 / Math.max(1, cv.textWidth(shown, 26, options)));
         text(cv, shown, x, y - 20 + index * 28, 108, size, current.live ? C.cyan : t.dim, options);
     });

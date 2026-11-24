@@ -3,17 +3,22 @@ const { FuelSource } = require('./fuel');
 const { SAMPLE_MS, validRpm } = require('./calculations');
 const DEFINITIONS = [
     { key: 'gps', iface: 'de.bmw.infotainment.navigation.positioning.Positioning', instance: 'Main_Instance', field: 'rawPositionData', read: true, pollMs: 1000, staleMs: 5000 },
-    { key: 'speed', iface: 'de.bmw.infotainment.vehicle.Vehicle2', field: 'statusCarSpeed2', read: true, pollMs: SAMPLE_MS, staleMs: 3000 },
+    { key: 'speed', iface: 'de.bmw.infotainment.vehicle.Vehicle2', field: 'statusCarSpeed2', read: true, pollMs: SAMPLE_MS, staleMs: 3000, monitor: true },
     { key: 'rpm', iface: 'de.bmw.infotainment.vehicle.CDS', field: 'statusEngineSpeed2', read: true, pollMs: SAMPLE_MS, staleMs: 3000 },
-    { key: 'engine', iface: 'de.bmw.infotainment.vehicle.CDS', field: 'statusEngineStatus', read: true, pollMs: 1000, staleMs: 3000 },
+    { key: 'engine', iface: 'de.bmw.infotainment.vehicle.CDS', field: 'statusEngineStatus', read: true, pollMs: 1000, staleMs: 3000, monitor: true },
+    { key: 'driveStateNoCrc', iface: 'de.bmw.infrastructure.VehicleCondition', field: 'vehicleConditionNoCrc', read: false, staleMs: null, monitor: true },
+    { key: 'driveState', iface: 'de.bmw.infrastructure.VehicleCondition', field: 'VehicleCondition', read: false, staleMs: null, monitor: true },
+    { key: 'power', iface: 'de.bmw.infotainment.lifecycle.lifecycle.Lifecycle', instance: 'Front', field: 'powerStateDetailed', read: true, pollMs: 1000, staleMs: 5000, monitor: true },
     { key: 'fuelCounter', iface: 'de.bmw.infotainment.vehicle.CDS2', field: 'statusInjectionVolume', read: true, pollMs: SAMPLE_MS, staleMs: 3000 },
     { key: 'range', iface: 'de.bmw.infotainment.KombiIF', field: 'statusRangeTankStatus', read: true, pollMs: 1000, staleMs: 30000 },
     { key: 'rangeFallback', iface: 'de.bmw.infrastructure.VehicleInformation', field: 'Range', read: false, staleMs: null },
-    { key: 'gear', iface: 'de.bmw.infrastructure.VehicleInformation', field: 'statusGearboxDrive', read: false, staleMs: null },
-    { key: 'gearSelection', iface: 'de.bmw.infrastructure.VehicleInformation', field: 'DataPowerTrain2', read: false, staleMs: null },
+    { key: 'gear', iface: 'de.bmw.infrastructure.VehicleInformation', field: 'statusGearboxDrive', read: false, staleMs: null, monitor: true },
+    { key: 'gearSelection', iface: 'de.bmw.infrastructure.VehicleInformation', field: 'DataPowerTrain2', read: false, staleMs: null, monitor: true },
 ];
 const NOTES = {
-    ignition: 'Automatic recording uses the CDS engine-running enum, not ignition. Missing or invalid engine status is not engine-off; engine stop/start may divide engine sessions.',
+    ignition: 'Trip boundaries use vehicle drive readiness or head-unit shutdown. Auto-start can fall back to CDS engine state.',
+    driveState: 'VehicleCondition.statusConditionVehicle reports drive readiness, its end, and parked or accessory states.',
+    power: 'Lifecycle.Front.powerStateDetailed reports head-unit power-off.',
     fuel: 'Whole-engine flow from both DME banks or the OBD engine fuel rate via 01/5E or 22/F45E. The CDS2 injection-volume counter backs up diagnostic flow after calibration against a whole-engine reading. US gallons/hour.',
     fuelCounter: 'CDS2.statusInjectionVolume.injectionVolumeFuelEngine is a wrapping raw counter, not litres. Its rate requires live diagnostic calibration for this collection session.',
     range: 'KombiIF.statusRangeTankStatus: mileageKilometre / 1.609344 miles; fluidLevelFuelTank / 3.785411784 US gallons. Invalid sentinels excluded; context only, not trip-distance or fuel-consumption deltas.',
@@ -28,6 +33,14 @@ const NOTES = {
 };
 const SELECTIONS = { 1: 'N', 2: 'R', 3: 'P', 4: 'NP', 5: '1', 6: '2', 7: '3', 8: '4', 9: '5', 10: '6', 11: '7', 12: '8', 13: '9' };
 const STAGES = { 1: 'P', 2: 'R', 3: 'N', 4: 'D', P: 'P', R: 'R', N: 'N', D: 'D' };
+const DRIVE_STATES = {
+    1: 'parked', 2: 'parked', 3: 'parked', 5: 'parked', 8: 'ready', 10: 'ready', 12: 'ending',
+    PARKEN_BN_NIO: 'parked', PARKEN_BN_IO: 'parked', STANDFUNKTIONEN_KUNDE_NICHT_IM_FZG: 'parked',
+    WOHNEN: 'parked', FAHRBEREITSCHAFT_HERSTELLEN: 'ready', FAHREN: 'ready', FAHRBEREITSCHAFT_BEENDEN: 'ending',
+};
+const POWER_OFF = new Set([0, 7, 9, 34, 47, 92, 'SLEEP_MODE_ALL_OFF', 'POWERDOWN_MODE_USER_OFF',
+    'SLEEPDELAY_MODE_USER_OFF', 'SHUTDOWN_MODE_USER_OFF', 'TEMPSHUTDOWN_USER_OFF', 'GOODBYE_SCREEN']);
+const POWER_ON = new Set([90, 99, 100, 'WELCOME_SCREEN', 'FULL_ON_USER_ON', 'ENTERTAINMENT_MODE_USER_ON']);
 const FIX_MAX_AGE_MS = 5000, FIX_FUTURE_MS = 2000;
 const mono = () => { const t = process.hrtime(); return t[0] * 1000 + t[1] / 1000000; };
 function utcTime(raw) {
@@ -40,7 +53,17 @@ function utcTime(raw) {
     return date.getUTCFullYear() === d.year && date.getUTCMonth() === d.month - 1 && date.getUTCDate() === d.day ? at : null;
 }
 function decode(key, raw) {
+    if (key === 'power') {
+        const value = POWER_OFF.has(raw) ? 'off' : POWER_ON.has(raw) ? 'on' : null;
+        return { state: value ? 'live' : 'invalid', value, note: NOTES.power };
+    }
     if (!raw || typeof raw !== 'object') return { state: 'invalid', note: 'Malformed payload' };
+    if (key === 'driveState' || key === 'driveStateNoCrc') {
+        const status = raw.statusConditionVehicle, qualifier = raw.qualifierStatusConditionVehicle;
+        const usable = qualifier === undefined || [2, 3, 'SIGNALWERT_GUELTIG', 'SIGNALWERT_EINGESCHRAENKT_GUELTIG'].includes(qualifier);
+        const value = usable && Object.prototype.hasOwnProperty.call(DRIVE_STATES, status) ? DRIVE_STATES[status] : null;
+        return { state: value ? 'live' : 'invalid', value, note: NOTES.driveState };
+    }
     if (key === 'gps') {
         const p = raw.position || {}, h = p.height || {};
         const coordinates = p.coordinatesValid === true && Number.isFinite(p.latitude) && Math.abs(p.latitude) <= 90 &&
@@ -105,9 +128,11 @@ class Sources {
         this.fuel = new FuelSource(ctx, (sample) => this.fuelDelivery(sample), Diag);
         this.timer = setInterval(() => {
             if (!this.enabled) return;
+            const now = mono();
             Object.keys(this.connections).forEach((key) => {
                 const c = this.connections[key];
-                this.fetch(c);
+                if (c.closed && c.retryAt && now >= c.retryAt) this.open(c);
+                else this.fetch(c);
             });
         }, 50);
         if (this.timer.unref) this.timer.unref();
@@ -164,11 +189,12 @@ class Sources {
     fuelDelivery(sample) { this.values.fuel = sample; this.changed(); }
     transport(c, state, note) { c.definitions.forEach((d) => this.state(d.key, state, note)); }
     async open(def) {
-        const c = { key: def.key, definitions: def.definitions, proxy: null, available: false, availabilityKnown: false,
+        const c = { key: def.key, iface: def.iface, instance: def.instance, definitions: def.definitions,
+            proxy: null, available: false, availabilityKnown: false,
             closed: false, ready: false, reads: {}, versions: {}, notifiedAt: {}, nextRead: {}, epoch: 0, waitTimer: null };
         this.connections[c.key] = c; this.transport(c, 'waiting', 'Connecting');
-        if (!this.signals.hasNative()) { this.transport(c, 'unavailable', 'No live SOME/IP connection'); return; }
         try {
+            if (!this.signals.hasNative()) { this.transport(c, 'unavailable', 'No live SOME/IP connection'); return; }
             const opening = this.signals.proxy(def.iface, def.instance);
             opening.then((p) => { if (!this.alive(c)) this.dispose({ proxy: p }); }).catch(() => {});
             c.proxy = await deadline(opening, 5000, 'Connect');
@@ -201,6 +227,8 @@ class Sources {
         } catch (e) {
             if (!this.alive(c)) return;
             this.transport(c, 'error', e.message); this.dispose(c);
+            // Optional interfaces absent from the installed manifest will remain absent until the next install.
+            if (!e.message.startsWith('no SOME/IP config')) c.retryAt = mono() + 10000;
         }
     }
     fetch(c) {
@@ -248,12 +276,12 @@ class Sources {
         return op.promise;
     }
     collect(mode) {
-        if (this.closed) return;
+        if (this.closed || this.mode === mode) return;
         this.enabled = true; this.mode = mode;
         if (mode === 'full') this.fuel.start(); else this.fuel.stop();
         const wanted = {};
         DEFINITIONS.forEach((d) => {
-            if (mode !== 'full' && d.key !== 'engine') return;
+            if (mode !== 'full' && !d.monitor) return;
             const instance = d.instance || '1', key = d.iface + ':' + instance;
             if (!wanted[key]) wanted[key] = { key, iface: d.iface, instance, definitions: [] };
             wanted[key].definitions.push(d);
@@ -262,13 +290,14 @@ class Sources {
             const c = this.connections[key];
             if (wanted[key] && !c.closed && c.definitions.length === wanted[key].definitions.length) return;
             this.dispose(c); delete this.connections[key];
-            c.definitions.forEach((d) => this.state(d.key, 'waiting', 'Engine-status session monitor'));
+            c.definitions.forEach((d) => this.state(d.key, 'waiting', 'Waiting for vehicle data'));
         });
         Object.keys(wanted).forEach((key) => { if (!this.connections[key]) this.open(wanted[key]); });
     }
     monitor() { this.collect('monitor'); }
     start() { this.collect('full'); }
     stop() {
+        if (this.mode === 'off') return;
         this.enabled = false; this.mode = 'off';
         this.fuel.stop();
         Object.keys(this.connections).forEach((key) => this.dispose(this.connections[key]));
@@ -279,6 +308,16 @@ class Sources {
     dispose(c) {
         c.closed = true; clearTimeout(c.waitTimer);
         if (c.proxy && c.proxy.shutdown) Promise.resolve().then(() => c.proxy.shutdown()).catch((e) => this.ctx.log.warn(e));
+    }
+    lifecycle(now) {
+        const { driveState, driveStateNoCrc, power, engine } = this.values;
+        const drive = driveStateNoCrc.state === 'live' && (driveState.state !== 'live' || driveStateNoCrc.receivedMono >= driveState.receivedMono)
+            ? driveStateNoCrc : driveState;
+        return {
+            driveState: drive.state === 'live' ? drive.value : null,
+            power: power.state === 'live' && now - power.receivedMono <= 5000 ? power.value : null,
+            engine: engine.state === 'live' && now - engine.receivedMono > 3000 ? { state: 'stale' } : engine,
+        };
     }
     sample(now, includeFixes = true) {
         const result = {};
