@@ -52,6 +52,27 @@ def copy_app_data(source, target, spec):
             shutil.copy2(item, destination)
 
 
+def write_temperature_readiness(app):
+    readme = (app / 'README.md').read_text(encoding='utf-8')
+    table = readme.partition('\n#### temperature readiness\n')[2].lstrip()
+    limits = {}
+    for row in table.splitlines()[2:]:
+        row = row.strip()
+        if not row.startswith('|'):
+            break
+        try:
+            _, key, ready, high = (cell.strip() for cell in row.strip('|').split('|'))
+            thresholds = [int(ready), int(high)]
+            if key in limits or thresholds[0] >= thresholds[1]:
+                raise ValueError('Expected a unique display key and strictly increasing thresholds')
+        except ValueError as error:
+            raise ValueError('Invalid temperature readiness row in Live Data Viewer README.md: ' + row) from error
+        limits[key] = thresholds
+    if limits.keys() != {'oilCds', 'coolantCds', 'transmission2', 'tyreTemp'}:
+        raise ValueError('Live Data Viewer README.md must list readiness thresholds for oil, coolant, transmission, and tires')
+    (app / 'temperature_readiness.js').write_text('module.exports = ' + json.dumps(limits, indent=4) + ';\n', encoding='utf-8')
+
+
 class RuntimeOverlay:
     def __init__(self, root, upstream, enabled):
         self.root = root
@@ -123,6 +144,7 @@ def build(args):
             (app / 'app.json').write_text(json.dumps(spec, indent=2) + '\n', encoding='utf-8')
         if local and args.app == 'live_data_viewer':
             shutil.copy2(args.upstream / 'apps' / 'car_vitals' / 'demo.js', app / 'vitals_demo.js')
+            write_temperature_readiness(app)
         if local and args.app == 'sol':
             ambient = args.upstream / 'apps' / 'ambient_config'
             for name in SOL_UPSTREAM_FILES:

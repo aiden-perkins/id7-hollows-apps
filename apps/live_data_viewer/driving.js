@@ -1,16 +1,10 @@
 'use strict';
-const { C, text, get, fmt } = require('./instruments');
+const { RPM_MAX, RPM_REDLINE, rpmColor, temperatureColor, text, get, fmt } = require('./instruments');
 const { chassis, gMeter, pedalStatus, physical, liveRaw } = require('./dynamics');
 
 const LITRES_PER_US_GALLON = 3.785411784;
 // Display reference requested for this car; not an ECU-reported capacity.
 const FUEL_CAPACITY_G = 18;
-const RPM_MAX = 7000;
-const RPM_BANDS = [
-    { start: 6000, end: 6300, color: '#f6d34f' },
-    { start: 6300, end: 6500, color: '#ff9648' },
-    { start: 6500, end: RPM_MAX, color: C.red },
-];
 const M850I_GEAR_RATIOS = [5.500, 3.520, 2.200, 1.720, 1.317, 1.000, 0.823, 0.640];
 // Fixed display references, not measured mechanical limits.
 const BARS = [
@@ -18,16 +12,16 @@ const BARS = [
     { id: 'horsepower', label: 'POWER', unit: 'hp', shownUnit: 'HP', max: 1000, places: 0 },
     { id: 'torque', label: 'TORQUE', unit: 'lb-ft', shownUnit: 'lb-ft', max: 1000, places: 0 },
     { id: 'boost', label: 'BOOST', unit: 'psi', shownUnit: 'PSI', max: 32, places: 1 },
-    { id: 'brakePressure', label: 'BRAKE', unit: 'bar', shownUnit: 'bar', max: 84, places: 1, pedal: true, rawId: 'brakeStatus' },
-    { id: 'acceleratorNative', label: 'ACCEL', unit: '%', shownUnit: '%', max: 100, places: 0, pedal: true, fallback: 'accelerator' },
+    { id: 'brakePressure', label: 'BRAKE', unit: 'bar', shownUnit: 'bar', max: 84, places: 1,
+        color: 'crit', pedal: true, rawId: 'brakeStatus' },
+    { id: 'acceleratorNative', label: 'ACCEL', unit: '%', shownUnit: '%', max: 100, places: 0,
+        color: 'accel', pedal: true, fallback: 'accelerator' },
 ];
-function rpmBands(cv, t, x, width, yAt, current) {
-    for (const { start, end, color } of RPM_BANDS) {
-        const top = yAt(end), bottom = yAt(start);
-        const fill = yAt(Math.max(start, Math.min(end, current.value || 0)));
-        if (fill > top) cv.fillRect(x + 3, top, width - 6, fill - top, color + '55');
-        if (fill < bottom) cv.fillRect(x + 3, fill, width - 6, bottom - fill, current.live ? color : t.dim);
-    }
+function rpmRedline(cv, t, x, width, yAt, current) {
+    const top = yAt(RPM_MAX), bottom = yAt(RPM_REDLINE);
+    const fill = yAt(Math.max(RPM_REDLINE, current.value || 0));
+    if (fill > top) cv.fillRect(x + 3, top, width - 6, fill - top, t.crit + '55');
+    if (fill < bottom) cv.fillRect(x + 3, fill, width - 6, bottom - fill, current.live ? t.crit : t.dim);
 }
 function shiftMarkers(cv, t, vm, x, width, yAt, rpm) {
     if (rpm <= 0) return;
@@ -37,15 +31,15 @@ function shiftMarkers(cv, t, vm, x, width, yAt, rpm) {
     const index = gear.value - 1, ratio = M850I_GEAR_RATIOS[index];
     if (!ratio) return;
     const markers = [
-        { next: M850I_GEAR_RATIOS[index + 1], from: x - 6, to: x + width - 4, color: '#a6e7ff' },
-        { next: M850I_GEAR_RATIOS[index - 1], from: x + 4, to: x + width + 6, color: '#ffffff' },
+        { next: M850I_GEAR_RATIOS[index + 1], from: x - 6, to: x + width - 4, color: t.accent2 },
+        { next: M850I_GEAR_RATIOS[index - 1], from: x + 4, to: x + width + 6, color: t.text },
     ];
     for (const { next, from, to, color } of markers) {
         if (!next) continue;
         // Estimate the RPM in the adjacent ratio at the same road speed.
         const predicted = rpm * next / ratio, y = yAt(predicted);
         cv.line(from, y, to, y, 5, t.bg);
-        cv.line(from, y, to, y, 2, predicted > RPM_MAX ? C.red : color);
+        cv.line(from, y, to, y, 2, predicted > RPM_MAX ? t.crit : color);
     }
 }
 function bars(cv, t, vm, box) {
@@ -61,33 +55,36 @@ function bars(cv, t, vm, box) {
         }
         // Preserve signed physical samples in the model, as with the previous performance dials.
         const value = current.value === null || field.pedal ? current.value : Math.max(0, current.value);
-        const color = current.live ? field.pedal ? C.cyan : C.blue : t.dim;
+        const rpm = field.id === 'rpm';
+        const color = current.live ? (t[field.color] || t.accent) : t.dim;
+        const readoutColor = rpm && current.live ? rpmColor(t, value) : color;
         const shown = fmt(value, raw === null ? field.places : 0), options = { align: 'center', font: 'num' };
         const size = Math.min(34, 34 * (column - 8) / Math.max(1, cv.textWidth(shown, 34, options)));
         text(cv, field.label, cx, box.y + 22, column - 4, 16, t.dim, { align: 'center', font: 'bold' });
-        text(cv, shown, cx, box.y + 60, column - 8, size, color, options);
+        text(cv, shown, cx, box.y + 60, column - 8, size, readoutColor, options);
         text(cv, raw === null ? field.shownUnit : 'RAW', cx, box.y + 83, column - 8, 17, t.dim, { align: 'center' });
         cv.roundRect(x, top, width, bottom - top, 6, t.track);
         const max = raw === null ? field.max : vm.model.definitions[field.rawId].invalidFrom - 1;
         const yAt = (v) => bottom - 3 - (bottom - top - 6) * Math.max(0, Math.min(1, v / max));
         const y = yAt(value || 0), height = bottom - 3 - y;
         if (height > 0) cv.roundRect(x + 3, y, width - 6, height, Math.min(4, height / 2), color);
-        if (field.id === 'rpm') rpmBands(cv, t, x, width, yAt, current);
+        if (rpm) rpmRedline(cv, t, x, width, yAt, current);
         if (height > 4) cv.line(x + 7, y + 2, x + width - 7, y + 2, 2, current.live ? t.text : t.dim);
         cv.strokeRoundRect(x, top, width, bottom - top, 6, 2, t.tick);
         [0, 0.25, 0.5, 0.75, 1].forEach((fraction) => {
             const y = bottom - (bottom - top) * fraction;
             cv.line(x + width + 3, y, x + width + 8, y, 1, t.tick);
         });
-        if (field.id === 'rpm' && current.live) shiftMarkers(cv, t, vm, x, width, yAt, value);
+        if (rpm && current.live) shiftMarkers(cv, t, vm, x, width, yAt, value);
     });
 }
 function readout(cv, t, vm, id, label, unit, x, y, width, places) {
     const current = physical(vm, id, unit), shown = fmt(current.value, places) + ' ' + (unit === 'F' ? '°F' : unit);
+    const color = unit === 'F' ? temperatureColor(t, id, current) : (current.live ? t.accent : t.dim);
     const options = { align: 'center', font: 'num' }, cx = x + width / 2;
     const size = Math.min(36, 36 * width / Math.max(1, cv.textWidth(shown, 36, options)));
     text(cv, label, cx, y + 22, width, 17, t.dim, { align: 'center', font: 'bold' });
-    text(cv, shown, cx, y + 65, width, size, current.live ? C.blue : t.dim, options);
+    text(cv, shown, cx, y + 65, width, size, color, options);
 }
 function fuel(cv, t, vm, x, y, width) {
     const current = physical(vm, 'tankTotal', 'L');
@@ -97,7 +94,7 @@ function fuel(cv, t, vm, x, y, width) {
     const options = { align: 'center', font: 'num' };
     const size = Math.min(32, 32 * width / Math.max(1, cv.textWidth(shown, 32, options)));
     text(cv, 'FUEL', cx, y + 22, width, 17, t.dim, { align: 'center', font: 'bold' });
-    text(cv, shown, cx, y + 65, width, size, current.live ? C.blue : t.dim, options);
+    text(cv, shown, cx, y + 65, width, size, current.live ? t.accent : t.dim, options);
 }
 function exhaust(cv, t, vm, x, y) {
     const cx = x + 64;
@@ -108,16 +105,16 @@ function exhaust(cv, t, vm, x, y) {
     ['Left', 'Right'].forEach((side, index) => {
         const px = cx + (index ? 42 : -42), state = get(vm, 'exhaust' + side);
         const value = state.state === 'live' && !state.retained ? state.value : null;
-        const color = value === 'OPEN' || value === 'CLOSED' ? C.blue : t.dim;
+        const color = value === 'OPEN' || value === 'CLOSED' ? t.accent : t.dim;
         cv.polyline([[cx + (index ? 22 : -22), y + 41], [px, y + 41], [px, y + 52]], 5, t.tick);
         if (value === 'CLOSED') cv.circle(px, y + 64, 9, color);
         else cv.arc(px, y + 64, 6, 9, 0, 360, color);
     });
     [['open', 'Open'], ['closed', 'Closed'], ['oem', 'OEM']].forEach(([mode, label], index) => {
         const bx = x + 144 + index * 168, by = y + 22, selected = vm.exhaustMode === mode;
-        cv.roundRect(bx, by, 160, 56, 7, selected ? C.blue + '28' : t.panelTop);
-        cv.strokeRoundRect(bx, by, 160, 56, 7, 1.5, selected ? C.blue : t.tick);
-        text(cv, label, bx + 80, by + 36, 148, 25, selected ? C.blue : t.text, { align: 'center', font: 'bold' });
+        cv.roundRect(bx, by, 160, 56, 7, selected ? t.target + '28' : t.panelTop);
+        cv.strokeRoundRect(bx, by, 160, 56, 7, 1.5, selected ? t.target : t.tick);
+        text(cv, label, bx + 80, by + 36, 148, 25, selected ? t.target : t.text, { align: 'center', font: 'bold' });
         cv.targets.push({ key: 'exhaust' + label, x: bx, y: by, w: 160, h: 56,
             run: () => vm.setExhaust(mode) });
     });

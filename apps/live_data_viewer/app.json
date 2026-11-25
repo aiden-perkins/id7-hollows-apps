@@ -2,10 +2,11 @@
   "id": "live_data_viewer",
   "title": "Live Data Viewer",
   "description": "Driving dynamics, Car Status and a dual-DME BM3 channel grid",
-  "version": "1.10.1",
+  "version": "1.10.3",
   "vendor": "custom",
   "loggingId": "OA9E",
   "iconGlyph": "LIVE",
+  "config": { "settingsPreferencesOnly": true },
   "signals": {
     "de.bmw.infotainment.vehicle.CDS": {
       "statusEngineTemperature": "rs",
@@ -52,9 +53,9 @@
       "actualSteeringAngleDriverNoCRC": "s",
       "SteeringAngleFrontAxleEffective": "s"
     },
-    "de.bmw.chassis.VehicleStabilizationManagement": {
+    "de.bmw.infotainment.vehicle.A4A": {
       "_optional": "Driving brake status notifications",
-      "StabilizationManagement": "s"
+      "statusA4AFDRControl": "s"
     },
     "de.bmw.powertrain.Powertrain": {
       "_optional": "Driving wheel speed notifications",
@@ -90,12 +91,14 @@
   ],
   "settings": [
     {
-      "key": "demo", "label": "Demo data", "type": "choice", "default": "off",
-      "options": [["off", "Off"], ["on", "On (simulated)"]]
-    },
-    {
-      "key": "demoDriveMode", "label": "Demo driving mode", "type": "choice", "default": "SPORT EXPERT",
-      "options": [["SPORT EXPERT", "Sport"], ["COMFORT", "Comfort"], ["ECO PRO EFFICIENT", "Eco Pro"]]
+      "key": "colorTheme", "label": "Theme", "type": "choice", "default": "carbon_track",
+      "options": [
+        ["carbon_track", "Carbon Track"],
+        ["black_gold", "Black & Gold"],
+        ["neon_rally", "Neon Rally"],
+        ["blackened_copper", "Blackened Copper"],
+        ["obsidian_violet", "Obsidian Violet"]
+      ]
     },
     {
       "key": "section", "label": "Initial page", "type": "choice", "default": "driving",
@@ -114,97 +117,12 @@
       ]
     },
     {
-      "key": "bm3TransportNote", "label": "BM3 diagnostic ownership", "type": "text",
-      "default": "Run one diagnostic app at a time. The viewer temporarily defines F300 and uses a free RAM slot (F301 or F302) for monitoring."
-    },
-    {
-      "key": "bm3AccuracyNote", "label": "BM3 availability", "type": "text",
-      "default": "Each DME needs an exact ROM match. Timing corrections use DME-local cylinder slots. Channels without a verified definition or array mapping display --."
-    },
-    {
-      "key": "bm3SpeedNote", "label": "BM3 refresh", "type": "text",
-      "default": "Reply-paced grouped reads; getter refresh setting does not apply. Hz measures completed cycles per DME, not display FPS. Stale values expire after 1.5 s. Vehicle speed/accuracy not yet measured."
-    },
-    {
-      "key": "bm3Status", "label": "BM3 acquisition details", "type": "text", "default": "Select an engine family for the BM3 channels and Car Status timing correction."
-    },
-    {
-      "key": "refreshMs", "label": "Getter refresh", "type": "number", "unit": "ms", "default": 100,
-      "steps": [100, 250, 500, 1000, 2000]
-    },
-    {
       "key": "boostSource", "label": "Boost source", "type": "choice", "default": "auto",
       "options": [["auto", "Auto (sport display, then DME)"], ["fes", "Sport display"], ["dme", "Engine unit (DME)"]]
     },
     {
-      "key": "boostNote", "label": "Boost updates", "type": "text",
-      "default": "M Vitals sources; immediate sport-display notifications; 100 ms getter / DME target, not guaranteed"
-    },
-    {
       "key": "trendSeconds", "label": "Recent graph window", "type": "number", "unit": "s", "default": 180,
-      "steps": [60, 180, 600]
-    },
-    {
-      "key": "categoryOrder", "label": "Category order", "type": "choice", "default": "driving,status,bm3",
-      "options": [
-        ["driving,status,bm3", "Driving / Car Status / BM3"],
-        ["driving,bm3,status", "Driving / BM3 / Car Status"],
-        ["status,driving,bm3", "Car Status / Driving / BM3"],
-        ["status,bm3,driving", "Car Status / BM3 / Driving"],
-        ["bm3,driving,status", "BM3 / Driving / Car Status"],
-        ["bm3,status,driving", "BM3 / Car Status / Driving"]
-      ]
-    },
-    {
-      "key": "displayNote", "label": "Display", "type": "text",
-      "default": "Up to 60 FPS; US units; total fuel in US gallons and percent; current battery voltage"
-    },
-    {
-      "key": "fuelNote", "label": "Fuel percentage", "type": "text",
-      "default": "Total US gallons / 18 G; display reference, not ECU-reported capacity"
-    },
-    {
-      "key": "samplingNote", "label": "Sampling", "type": "text",
-      "default": "Only the visible category collects live readings"
-    },
-    {
-      "key": "pedalNote", "label": "Pedals", "type": "text",
-      "default": "Live accelerator and brake notifications; diagnostic fallback targets 100 ms"
-    },
-    {
-      "key": "brakeNote", "label": "Brake", "type": "text",
-      "default": "Driver braking status (raw); brake system pressure shown when status is unavailable"
-    },
-    {
-      "key": "kickdownNote", "label": "Kickdown", "type": "text",
-      "default": "DME digital switch; never inferred from pedal position"
-    },
-    {
-      "key": "slowNote", "label": "Slower readings", "type": "text",
-      "default": "Fuel 5 s; battery 2 s; TPMS at least 5 s"
-    },
-    {
-      "key": "exhaustNote", "label": "Exhaust controls", "type": "text",
-      "default": "Manual requests only; highlight is not measured position"
-    },
-    {
-      "key": "modelNote", "label": "Temperature models", "type": "text",
-      "default": "Exhaust and transfer-clutch models are labelled"
-    },
-    {
-      "key": "missingNote", "label": "Unsupported readings", "type": "text",
-      "default": "Front / rear delivered power unknown; no torque-split estimate"
-    },
-    {
-      "key": "sessionNote", "label": "Min / max", "type": "text",
-      "default": "This app session only"
-    },
-    {
-      "key": "demoNote", "label": "Demo safety", "type": "text",
-      "default": "Simulated values; exhaust requests disabled"
-    },
-    {
-      "key": "lastError", "label": "Last error", "type": "text", "default": "None"
+      "steps": [180, 600]
     }
   ]
 }

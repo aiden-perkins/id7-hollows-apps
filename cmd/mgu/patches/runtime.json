@@ -15,6 +15,11 @@
         "file":  "mgu.js"
     },
     {
+        "new":  "            const preferencesOnly = SPEC.config && SPEC.config.settingsPreferencesOnly;\n            const sh = listSheet(settings, null, preferencesOnly ? {} : { version: SPEC.version",
+        "old":  "            const sh = listSheet(settings, null, { version: SPEC.version",
+        "file":  "mgu.js"
+    },
+    {
         "new":  "/** Read a field through the native-call queue. */\nfunction get(p, field, timeoutMs) {\n    return nativeTick(() => p.getValue(field, timeoutMs || 3000));\n}\n\nmodule.exports = { watch, proxy, call, get, set, on, onAvailable, loadConfig, hasNative: () => !!someip };",
         "old":  "module.exports = { watch, proxy, call, set, on, onAvailable, loadConfig, hasNative: () => !!someip };",
         "file":  "signals.js"

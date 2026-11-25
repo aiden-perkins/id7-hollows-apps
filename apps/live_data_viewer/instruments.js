@@ -1,31 +1,18 @@
 'use strict';
-const C = { blue: '#81c4ff', cyan: '#4e9fdf', amber: '#ffbd69', red: '#ff565c',
-    series: ['#81c4ff', '#4e9fdf', '#b6ddff', '#5d82a8'] };
-const palettes = {
-    initial: { blue: '#81c4ff', cyan: '#4e9fdf', series: ['#81c4ff', '#4e9fdf', '#b6ddff', '#5d82a8'] },
-    sport: { blue: '#ff565c', cyan: '#81c4ff', series: ['#ff565c', '#81c4ff', '#bf3446', '#4e9fdf'] },
-    comfort: { blue: '#f7a54b', cyan: '#b9824f', series: ['#f7a54b', '#b9824f', '#f4d26b', '#e7b77b'] },
-    eco: { blue: '#81c4ff', cyan: '#42c8bc', series: ['#81c4ff', '#42c8bc', '#a992e8', '#7dcf8a'] },
-};
-const modePalettes = {
-    'SPORT DYNAMIC': 'sport', 'SPORT EXPERT': 'sport', 'SPORT INDIVIDUAL': 'sport',
-    COMFORT: 'comfort', 'COMFORT PLUS': 'comfort', 'COMFORT INDIVIDUAL': 'comfort',
-    'ECO PRO EFFICIENT': 'eco', 'ECO PRO PLUS': 'eco', 'ECO PRO INDIVIDUAL': 'eco', ADAPTIVE: 'initial',
-};
-const lastPalettes = new WeakMap();
-function palette(vm) {
-    const model = vm.model, definition = model.definitions.driveMode;
-    let selected = lastPalettes.get(model) || palettes.initial;
-    if (definition) {
-        const mode = model.state(definition);
-        if (mode.state === 'live' && !mode.retained && Object.prototype.hasOwnProperty.call(modePalettes, mode.value)) {
-            selected = palettes[modePalettes[mode.value]];
-            lastPalettes.set(model, selected);
-        }
-    }
-    // Keep imported C references live; all normal gauges share the same mode primary.
-    Object.assign(C, selected);
-    return C;
+const temperatureReadiness = require('./temperature_readiness');
+
+const RPM_MAX = 7000;
+const RPM_REDLINE = 6500;
+
+function rpmColor(t, value) {
+    return value >= RPM_REDLINE ? t.crit : t.accent;
+}
+function temperatureColor(t, key, current) {
+    if (!current.live) return t.dim;
+    const [readyFrom, highFrom] = temperatureReadiness[key];
+    const degrees = Number(current.value.toFixed(0));
+    if (degrees < readyFrom) return t.cold;
+    return degrees < highFrom ? t.accent : t.crit;
 }
 function text(cv, str, x, y, width, size, color, options) {
     let s = String(str == null ? '' : str);
@@ -44,7 +31,7 @@ function numeric(vm, id) {
 }
 function fmt(n, places) { return Number.isFinite(n) ? n.toFixed(places === undefined ? 1 : places) : '--'; }
 function ink(t, s, normal) {
-    return s.retained || ['stale', 'error', 'invalid'].includes(s.state) ? t.dim : s.state === 'live' ? normal || C.blue : t.dim;
+    return s.state === 'live' && !s.retained ? normal || t.accent : t.dim;
 }
 // Session min/max rulers and rolling-window extrema are distinct observations.
 function plot(cv, t, vm, box, series, options) {
@@ -99,7 +86,7 @@ function plot(cv, t, vm, box, series, options) {
     const rowHeight = (h - (header ? 42 : 16)) / series.length;
     series.forEach((s, i) => {
         const d = defs[s.id], r = vm.model.readings[s.id], state = get(vm, s.id), n = numeric(vm, s.id);
-        const seriesColor = s.color || C.blue;
+        const seriesColor = s.color || t.accent;
         const c = ink(t, state, seriesColor);
         const row = y + (header ? 36 : 10) + i * rowHeight;
         const status = o.quiet ? '' : state.retained ? state.state === 'live' ? 'HELD' : 'HELD / ' + state.state.toUpperCase() :
@@ -111,7 +98,7 @@ function plot(cv, t, vm, box, series, options) {
             const physical = calibrated(d);
             const extrema = physical && session ? 'MIN ' + fmt(r.min, 0) + '  MAX ' + fmt(r.max, 0) :
                 !o.quiet && (d.decoder === 'unscaled' || /^raw\b/i.test(d.unit || '')) ? 'SCALE UNKNOWN' : '';
-            text(cv, status || extrema, x + 26, row + 30, legend - 14, 12, status ? C.amber : t.dim);
+            text(cv, status || extrema, x + 26, row + 30, legend - 14, 12, status ? t.warn : t.dim);
         }
         if (!calibrated(d) || unit && d.unit !== unit) return;
         if (session) {
@@ -128,7 +115,7 @@ function plot(cv, t, vm, box, series, options) {
             const label = status || (n === null ? 'UNAVAILABLE' : '');
             if (label) {
                 cv.circle(left + 5, top + 10 + i * 15, 2, seriesColor);
-                text(cv, label, left + 13, top + 14 + i * 15, traceWidth - 18, 11, status ? C.amber : t.dim);
+                text(cv, label, left + 13, top + 14 + i * 15, traceWidth - 18, 11, status ? t.warn : t.dim);
             }
         }
         let previous = null;
@@ -147,7 +134,7 @@ function plot(cv, t, vm, box, series, options) {
         [observation.minimum, observation.maximum].forEach((p, index) => {
             if (!p || index && p === observation.minimum) return;
             const px = left + traceWidth * (p.at - start) / (seconds * 1000), py = pointY(p.value);
-            cv.circle(px, py, radius, s.color || C.blue);
+            cv.circle(px, py, radius, s.color || t.accent);
             cv.circle(px, py, radius - 1, t.panelBottom);
         });
     }
@@ -168,4 +155,4 @@ function plot(cv, t, vm, box, series, options) {
     text(cv, '-' + seconds + 's', left, y + h - 9, traceWidth / 2, 13, t.dim);
     text(cv, 'NOW' + (unit ? ' / ' + unit : ''), left + traceWidth, y + h - 9, traceWidth / 2 - 4, 13, t.dim, { align: 'right' });
 }
-module.exports = { C, palette, text, get, calibrated, numeric, fmt, ink, plot };
+module.exports = { RPM_MAX, RPM_REDLINE, rpmColor, temperatureColor, text, get, calibrated, numeric, fmt, ink, plot };

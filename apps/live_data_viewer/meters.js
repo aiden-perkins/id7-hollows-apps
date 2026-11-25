@@ -1,6 +1,6 @@
 'use strict';
 const I = require('./instruments');
-const { C, text, get, numeric, fmt, ink } = I;
+const { text, get, numeric, fmt, ink } = I;
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 function bounds(vm, id, base, step) {
     const defs = vm.model.definitions;
@@ -60,7 +60,7 @@ function dial(cv, t, vm, id, title, box, color) {
     const cx = box.x + box.w / 2, cy = box.y + box.h / 2 + 12 * scale;
     const angle = (value) => -130 + 260 * clamp((value - range[0]) / (range[1] - range[0]), 0, 1);
     cv.arc(cx, cy, 137 * scale, 151 * scale, -130, 130, t.track);
-    cv.arc(cx, cy, 123 * scale, 128 * scale, -130, 130, C.cyan + '60');
+    cv.arc(cx, cy, 123 * scale, 128 * scale, -130, 130, t.accent + '60');
     for (let i = 0; i <= 20; i++) {
         const a = -130 + 13 * i, major = i % 5 === 0;
         const p = point(cx, cy, 155 * scale, a), q = point(cx, cy, (major ? 164 : 160) * scale, a);
@@ -72,7 +72,7 @@ function dial(cv, t, vm, id, title, box, color) {
         }
     }
     const max = displayed(supported ? r.max : null);
-    if (max !== null) { const p = point(cx, cy, 158 * scale, angle(max)); diamond(cv, p[0], p[1], 5 * scale, C.cyan); }
+    if (max !== null) { const p = point(cx, cy, 158 * scale, angle(max)); diamond(cv, p[0], p[1], 5 * scale, t.accent); }
     if (n !== null) {
         const a = angle(n), p = point(cx, cy, 134 * scale, a), q = point(cx, cy, 153 * scale, a), c = ink(t, s, color);
         if (a > -130) cv.arc(cx, cy, 137 * scale, 151 * scale, -130, a, c);

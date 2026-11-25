@@ -1,13 +1,15 @@
 'use strict';
 
+const bm3Catalog = require('./bm3_catalog');
+
 const IF = {
     engine: 'de.bmw.infotainment.vehicle.CDS', speed: 'de.bmw.infotainment.vehicle.Vehicle2',
     mode: 'de.bmw.infotainment.drivingexcitement.FES', thermal: 'de.bmw.infrastructure.analytics.BasicDataSet',
     air: 'de.bmw.infrastructure.EnvironmentalInformation', accel: 'de.bmw.infotainment.vehicle.CDS2',
-    vehicleInfo: 'de.bmw.infrastructure.VehicleInformation',
+    vehicleInfo: 'de.bmw.infrastructure.VehicleInformation', a4a: 'de.bmw.infotainment.vehicle.A4A',
     gps: 'de.bmw.infotainment.navigation.positioning.Positioning',
     diagnostic: 'com.harman.infotainment.systemfunctions.tasu.tasu.InternalTasu', steering: 'de.bmw.infotainment.drivingexcitement.XView',
-    steeringChassis: 'de.bmw.chassis.SteeringAngle', stability: 'de.bmw.chassis.VehicleStabilizationManagement',
+    steeringChassis: 'de.bmw.chassis.SteeringAngle',
     powertrain: 'de.bmw.powertrain.Powertrain', pedal: 'de.bmw.powertrain.AcceleratorPedal',
     tpms: 'de.bmw.infotainment.vehicle.TPMS', vehicle: 'de.bmw.infotainment.vehicle.Vehicle',
     sensors: 'de.bmw.infotainment.vehicle.TPMSInternalData',
@@ -97,11 +99,24 @@ temperature('transmission2', 'Transmission oil (EGS)', 'temperatures', 'Transmis
     physicalMin: -40, physicalMax: 160, pages: ['driving'],
     notes: 'Actual G015 SVT and 2026-10-28 E-Sys inventory identify EGS7. S18A EGS__ZFB_CE_EV maps EGS7 to GSZFBCE. ISTA GSZFBCE SG_FUNKTIONEN _GETRIEBEOELTEMPERATUR / 6000: unsigned byte - 40 Celsius, also upstream Car Vitals first EGS candidate. DA12 forum scaling is not substituted.' });
 add('converter', 'Torque converter temperature', 'temperatures', 'Transmission', { notes: 'GSZFBCE converter-temperature collectives are historical time-in-temperature bins, not a current converter sensor. Neither transmission-oil signal is substituted.' });
-add('iatBank1', 'Intake air / bank 1', 'temperatures', 'Air', {
-    numeric: true, unit: 'F', notes: 'BMW N63B44T3 training identifies the pre-compressor intake sensor in the bank 2 air line. DME 580F/581E and OBD 0F provide no separate bank 1 sensor identity.' });
-temperature('iatBank2', 'Intake air / bank 2', 'temperatures', 'Air', 0x12, 0x562A, 1, 0.75, -48, {
-    physicalMin: -40, physicalMax: 150,
-    notes: 'ISTA DME8FF_R ANSLUFTTEMP_LINEAR_BANK2: explicitly bank-2 linearized intake-air temperature, unsigned byte * 0.75 - 48 Celsius. Shared PRG is not a guarantee of fitted runtime support.' });
+[0x12, 0x13].forEach((target, index) => {
+    const candidates = new Map();
+    bm3Catalog.definitions.forEach((entry, catalogIndex) => {
+        if (entry.name !== 'IAT') return;
+        candidates.set(catalogIndex, { target, sid: 0x22, did: parseInt(entry.pid, 16), at: 0,
+            bytes: entry.bytes, exactBytes: entry.bytes, signed: entry.signed,
+            scale: Number(entry.factor) / Number(entry.div) * 1.8, offset: Number(entry.add) * 1.8 + 32 });
+    });
+    const selectDiagCandidates = (engine) => {
+        const profile = Object.prototype.hasOwnProperty.call(bm3Catalog.engines, engine) ? engine : 'N63T3';
+        return bm3Catalog.engines[profile].map((catalogIndex) => candidates.get(catalogIndex)).filter(Boolean);
+    };
+    const first = selectDiagCandidates('N63T3')[0], bank = index + 1;
+    diagnostic('iatBank' + bank, 'BM3 IAT / DME ' + bank, 'status', 'Air', target, first.did, 0, first.bytes, {
+        unit: 'F', pollMs: 2000, staleMs: 10000, diag: first,
+        diagCandidates: Array.from(candidates.values()), selectDiagCandidates,
+        notes: 'Ordinary BM3 IAT identifiers and calibration for the selected engine family, read directly from this DME. Uses the N63T3 IAT definition when no matching profile is selected.' });
+});
 temperature('iatUds', 'Intake air (UDS F40F)', 'sources', 'Air', 0x12, 0xF40F, 1, 1, -40, {
     physicalMin: -40, physicalMax: 150, notes: 'Upstream Car Vitals config.dme.iat first candidate F40F: byte - 40 Celsius; generic intake-air identity, not bank-specific.' });
 temperature('iatObd', 'Intake air (OBD 0F)', 'sources', 'Air', 0x12, 0x0F, 1, 1, -40, {
@@ -122,8 +137,8 @@ temperature('chargeAir', 'Charge air / bank 1 sensor 1', 'temperatures', 'Air', 
     notes: 'Upstream Car Vitals F477 byte 1: charge-air temperature bank 1 sensor 1, byte - 40 Celsius. OBD PID77 support bit0 must be set; other bank/sensor bytes are not substituted.' });
 add('cabin', 'Cabin air temperature', 'temperatures', 'Air');
 
-candidate('brakeStatus', 'Driver braking status', 'driving', 'Driver inputs', 'stability', 'StabilizationManagement', 'statusBrakingDriver', 63,
-    'Upstream Live Data driver braking status. The catalog defines a six-bit field with 63 unfilled; physical units are unknown.',
+candidate('brakeStatus', 'Driver braking status', 'driving', 'Driver inputs', 'a4a', 'statusA4AFDRControl', 'statusBrakingDriver', 63,
+    'Factory M Laptimer A4A driver braking status. The catalog defines 63 as unfilled. Physical units and status meanings are unverified.',
     { read: false, decoder: 'unscaled', staleMs: 1500 });
 candidate('brakePressure', 'Brake system pressure', 'driving', 'Driver inputs', 'diagnostic', 'brakeSystemPressure', 'value', null,
     'ISTA IB_G05 / IB_G2X DRUCKSENSOR_LESEN: DSC BRS 0x29, UDS 22 DB29; second big-endian signed 16-bit field / 10 bar. Not master-cylinder pressure or pedal percentage.',
@@ -341,8 +356,13 @@ add('chargeCoolerCoolant', 'Charge-cooler coolant', 'temperatures', 'Charge cool
 diagnostic('transferCase', 'Transfer-case clutch lamella model', 'temperatures', 'Drivetrain', 0x19, 0x4004, 0, 4, {
     unit: 'F', scale: 1.8 / 4194304, offset: 32, diag: { signed: true, minBytes: 59 }, pollMs: 5000,
     notes: 'ISTA LMV_G11 RES_0X4004_D STAT_TMPBLADE: signed BE32 / 4194304 Celsius, simulated clutch-lamella temperature, not measured case/oil temperature. Saved real response reports 47.96875 C.' });
-add('rearDifferential', 'Rear-differential temperature', 'temperatures', 'Drivetrain', {
-    numeric: true, unit: 'F', notes: 'BMW G15 training identifies a differential oil-temperature sensor on GHAS. A corresponding read identifier and scale were unavailable in the accessible ISTA definitions.' });
+temperature('rearDifferential', 'Rear differential oil temperature', 'status', 'Drivetrain', 0x0F, 0xDC47, 2, 1, 0, {
+    diag: { signed: true, exactBytes: 2 }, physicalMin: -50, physicalMax: 250,
+    notes: 'ISTA GSD_F90 TEMP_OEL / STAT_OELTEMP_WERT: measured rear differential oil temperature in signed big-endian 16-bit Celsius.' });
+diagnostic('rearDiffLockTorque', 'Rear differential lock torque', 'driving', 'Drivetrain', 0x0F, 0x4005, 0, 2, {
+    unit: 'Nm', scale: 0.5, offset: -1.5, staleMs: 3000, physicalMin: 0, physicalMax: 1500,
+    diag: { exactBytes: 2 },
+    notes: 'GSD_F90 SG_FUNKTIONEN SPERRMOMENT_IST: estimated actual clutch locking torque, unsigned BE16 * 0.5 - 1.5 Nm. 1500 Nm is the G15 225ALS rating. Live vehicle response unconfirmed.' });
 for (let i = 1; i <= 4; i++) {
     candidate('sensor' + i, 'Sensor slot ' + i + ' serial / ID', 'sources', 'Tires / TPMS: unknown positions',
         'sensors', 'tpmsInternalLastValues', 'tpmsInternalLastSensorSerNoId' + i, 2147483647,
@@ -358,15 +378,6 @@ diagnostic('fuelHighActual', 'High-pressure fuel (actual)', 'health', 'Fuel syst
     unit: 'psi', scale: 0.1 * 14.503773773020923, physicalMin: 0, physicalMax: 500 * 14.503773773020923,
     pages: ['health', 'temperatures'],
     notes: 'Car Vitals UDS F423 / OBD PID 23: direct-injection fuel rail gauge pressure, unsigned BE16 * 0.1 bar, displayed in psi. This is the configured DME reading, not separate bank-specific rail coverage; absolute F459 is not substituted.' });
-pressure('fuelLowActual', 'Low-pressure fuel (actual)', 2000, [
-    { did: 0xF40A, at: 0, bytes: 1 },
-    { sid: 0x01, did: 0x0A, at: 0, bytes: 1 },
-].map((c) => Object.assign({ scale: 0.03 * 14.503773773020923, physicalMin: 0.5 * 14.503773773020923,
-    physicalMax: 8 * 14.503773773020923 }, c)),
-    'Car Vitals fuel supply gauge pressure via F40A or OBD PID 0A. ECU-reported when supported; BMW N63TU3 training describes a supply system without a low-pressure sensor.',
-    { unit: 'psi', staleMs: 10000, page: 'status' });
-add('fuelLowTarget', 'Low-pressure fuel (target)', 'status', 'Fuel system', {
-    numeric: true, unit: 'psi', notes: 'No low-pressure fuel setpoint was identified in upstream, the retained BM3 catalog, or the available ISTA definitions.' });
 
 temperature('chargeAirBank2', 'Pre-throttle charge air / bank 2', 'status', 'Air', 0x13, 0x59D4, 2, 0.0234375, -273.15, {
     physicalMin: -40, physicalMax: 215,
